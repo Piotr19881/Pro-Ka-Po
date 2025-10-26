@@ -1,0 +1,6 @@
+PyQt6>=6.6.0
+PyQt6-tools>=6.6.0
+
+# SQLite support (built-in with Python)
+# Additional packages for date/time handling
+python-dateutil>=2.8.0
