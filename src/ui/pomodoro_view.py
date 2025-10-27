@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
                             QPushButton, QProgressBar, QGroupBox, QGridLayout,
                             QSpinBox, QCheckBox, QFrame, QApplication, QComboBox,
-                            QFileDialog, QMessageBox)
+                            QFileDialog, QMessageBox, QScrollArea)
 from PyQt6.QtCore import QTimer, pyqtSignal, Qt
 from PyQt6.QtGui import QFont, QPalette, QColor
 import time
@@ -361,6 +361,13 @@ class PomodoroView(QWidget):
         
     def create_settings_section(self, parent_layout):
         """Tworzy sekcję ustawień"""
+        # Utwórz QScrollArea dla prawej sekcji
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        # Widget z zawartością
         self.settings_widget = QWidget()
         
         layout = QVBoxLayout(self.settings_widget)
@@ -545,7 +552,10 @@ class PomodoroView(QWidget):
         
         layout.addStretch()
         
-        parent_layout.addWidget(self.settings_widget)
+        # Ustaw widget w scroll area
+        scroll_area.setWidget(self.settings_widget)
+        
+        parent_layout.addWidget(scroll_area)
         
     def load_settings(self):
         """Ładuje ustawienia"""

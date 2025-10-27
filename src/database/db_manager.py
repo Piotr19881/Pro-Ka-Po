@@ -96,6 +96,20 @@ class Database:
                     ALTER TABLE tasks 
                     ADD COLUMN note_id INTEGER
                 ''')
+            
+            # Sprawdź czy kolumna kanban istnieje w tabeli tasks, jeśli nie - dodaj ją
+            if 'kanban' not in task_columns:
+                cursor.execute('''
+                    ALTER TABLE tasks 
+                    ADD COLUMN kanban INTEGER DEFAULT 0
+                ''')
+            
+            # Sprawdź czy kolumna archived istnieje w tabeli tasks, jeśli nie - dodaj ją
+            if 'archived' not in task_columns:
+                cursor.execute('''
+                    ALTER TABLE tasks 
+                    ADD COLUMN archived INTEGER DEFAULT 0
+                ''')
 
             # Sprawdź czy kolumna dictionary_list istnieje, jeśli nie - dodaj ją
             cursor.execute("PRAGMA table_info(user_table_columns)")
@@ -185,6 +199,15 @@ class Database:
                 )
             ''')
             
+            # Tabela ustawień aplikacji
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT,
+                    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
+            
             # Dodaj domyślne kategorie
             default_categories = [
                 ('Praca', '#e74c3c'),
@@ -199,14 +222,14 @@ class Database:
             
             conn.commit()
     
-    def add_task(self, title, description='', status='todo', priority='medium', category=None, due_date=None):
+    def add_task(self, title, description='', status='todo', priority='medium', category=None, due_date=None, kanban=0):
         """Dodaje nowe zadanie do bazy danych"""
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO tasks (title, description, status, priority, category, due_date)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (title, description, status, priority, category, due_date))
+                INSERT INTO tasks (title, description, status, priority, category, due_date, kanban)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (title, description, status, priority, category, due_date, kanban))
             conn.commit()
             return cursor.lastrowid
     
@@ -900,6 +923,33 @@ class Database:
             
             return columns_list
     
+    def get_panel_columns(self):
+        """Pobiera kolumny oznaczone do wyświetlania w dolnym panelu"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT id, name, type, visible, in_panel, default_value, column_order, dictionary_list_id
+                FROM task_columns 
+                WHERE in_panel = 1
+                ORDER BY column_order
+            ''')
+            columns = cursor.fetchall()
+            
+            columns_list = []
+            for col in columns:
+                columns_list.append({
+                    'id': col[0],
+                    'name': col[1],
+                    'type': col[2],
+                    'visible': bool(col[3]),
+                    'in_panel': bool(col[4]),
+                    'default_value': col[5] or '',
+                    'column_order': col[6],
+                    'dictionary_list_id': col[7]
+                })
+            
+            return columns_list
+    
     def add_task_column(self, name, col_type, visible=True, in_panel=False, default_value='', dictionary_list_id=None):
         """Dodaje nową kolumnę zadania"""
         with self.get_connection() as conn:
@@ -948,6 +998,38 @@ class Database:
             conn.commit()
             return True
     
+    def update_task_column_by_name(self, column_name, name=None, col_type=None, visible=None, in_panel=None, default_value=None, dictionary_list_id=None, column_order=None):
+        """Aktualizuje kolumnę zadania przez nazwę (dla kolumn standardowych)"""
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Pobierz aktualną kolumnę
+            cursor.execute('SELECT id, name, type, visible, in_panel, default_value, dictionary_list_id, column_order FROM task_columns WHERE name = ?', (column_name,))
+            current = cursor.fetchone()
+            
+            if not current:
+                return False
+            
+            column_id = current[0]
+            
+            # Użyj nowych wartości lub zachowaj obecne
+            new_name = name if name is not None else current[1]
+            new_type = col_type if col_type is not None else current[2]
+            new_visible = visible if visible is not None else bool(current[3])
+            new_in_panel = in_panel if in_panel is not None else bool(current[4])
+            new_default = default_value if default_value is not None else current[5]
+            new_dict_list = dictionary_list_id if dictionary_list_id is not None else current[6]
+            new_order = column_order if column_order is not None else current[7]
+            
+            cursor.execute('''
+                UPDATE task_columns
+                SET name = ?, type = ?, visible = ?, in_panel = ?, default_value = ?, dictionary_list_id = ?, column_order = ?
+                WHERE id = ?
+            ''', (new_name, new_type, new_visible, new_in_panel, new_default, new_dict_list, new_order, column_id))
+            
+            conn.commit()
+            return True
+    
     def delete_task_column(self, column_id):
         """Usuwa kolumnę zadania"""
         with self.get_connection() as conn:
@@ -955,6 +1037,31 @@ class Database:
             cursor.execute('DELETE FROM task_columns WHERE id = ?', (column_id,))
             conn.commit()
             return cursor.rowcount > 0
+    
+    def set_setting(self, key, value):
+        """Zapisuje ustawienie do bazy danych"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO app_settings (key, value, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP)
+                ''', (key, str(value)))
+                conn.commit()
+        except Exception as e:
+            print(f"Błąd podczas zapisywania ustawienia {key}: {e}")
+    
+    def get_setting(self, key, default=None):
+        """Pobiera ustawienie z bazy danych"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('SELECT value FROM app_settings WHERE key = ?', (key,))
+                result = cursor.fetchone()
+                return result[0] if result else default
+        except Exception as e:
+            print(f"Błąd podczas odczytu ustawienia {key}: {e}")
+            return default
 
 # Test bazy danych
 if __name__ == "__main__":

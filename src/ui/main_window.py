@@ -1,5 +1,6 @@
 import sys
 import os
+import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QTextEdit, QComboBox, 
                              QDateTimeEdit, QLabel, QFrame, QSplitter, QStackedWidget,
@@ -8,11 +9,12 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QMessageBox, QTableWidget, QTableWidgetItem,
                              QStyledItemDelegate, QDateEdit, QCalendarWidget,
                              QDoubleSpinBox, QFormLayout, QListWidget, QLineEdit,
-                             QScrollArea, QInputDialog, QSizePolicy)
+                             QScrollArea, QInputDialog, QSizePolicy, QFileDialog)
 from PyQt6.QtCore import Qt, QDateTime, QDate, QTimer
 from PyQt6.QtGui import QFont, QIcon, QKeyEvent, QColor, QPalette
 from .pomodoro_view import PomodoroView
 from .theme_manager import ThemeManager
+from src.utils.backup_manager import BackupManager
 
 class EditableTableWidget(QTableWidget):
     """Rozszerzona QTableWidget z obsługą Enter dla dodawania rekordów"""
@@ -368,96 +370,340 @@ class TaskManagerApp(QMainWindow):
         parent_layout.addWidget(main_frame)
     
     def create_add_task_section(self, parent_layout):
-        """Tworzy sekcję dodawania zadań w układzie poziomym"""
+        """Tworzy sekcję dodawania zadań w układzie dwuwierszowym"""
         add_task_frame = QFrame()
         add_task_frame.setFrameStyle(QFrame.Shape.StyledPanel)
-        add_task_frame.setMaximumHeight(120)
-        add_task_frame.setMinimumHeight(100)
+        add_task_frame.setMaximumHeight(150)  # Zwiększ dla dwóch wierszy
+        add_task_frame.setMinimumHeight(130)  # Zwiększ dla dwóch wierszy
         
         add_task_layout = QVBoxLayout(add_task_frame)
-        add_task_layout.setContentsMargins(10, 5, 10, 5)
-        add_task_layout.setSpacing(5)
+        add_task_layout.setContentsMargins(15, 10, 15, 10)
+        add_task_layout.setSpacing(10)
         
-        # Tytuł sekcji
-        add_title = QLabel("DODAJ ZADANIE")
-        add_title.setFont(QFont("Arial", 12, QFont.Weight.Bold))
-        add_title.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        add_task_layout.addWidget(add_title)
-        
-        # Pierwszy wiersz - pole tekstowe i przycisk dodaj
+        # Pierwszy wiersz - pole tekstowe zadania i przycisk "+"
         first_row_layout = QHBoxLayout()
         first_row_layout.setSpacing(10)
         
-        # Etykieta zadania
-        first_row_layout.addWidget(QLabel("Zadanie:"))
-        
-        # Pole tekstowe zadania
+        # Pole tekstowe zadania (szerokie)
         self.task_input = QTextEdit()
-        self.task_input.setMaximumHeight(40)
+        self.task_input.setMaximumHeight(35)
+        self.task_input.setMinimumHeight(35)
         self.task_input.setPlaceholderText("Wpisz zadanie...")
-        first_row_layout.addWidget(self.task_input, 4)
+        self.task_input.setFont(QFont("Arial", 11))
+        # Dodaj obsługę Enter
+        self.task_input.keyPressEvent = self.task_input_key_press
+        first_row_layout.addWidget(self.task_input, 1)  # stretch = 1
         
-        # Przycisk dodaj
-        self.add_button = QPushButton("Dodaj zadanie")
-        self.add_button.setMinimumHeight(40)
-        self.add_button.setMaximumWidth(120)
+        # Kolumna z przyciskiem "+" i checkboxem Kanban
+        button_column_layout = QVBoxLayout()
+        button_column_layout.setSpacing(2)
+        
+        # Przycisk "+"
+        self.add_button = QPushButton("+")
+        self.add_button.setMinimumHeight(35)
+        self.add_button.setMaximumWidth(50)
+        self.add_button.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+        self.add_button.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2ecc71;
+            }
+            QPushButton:pressed {
+                background-color: #1e8449;
+            }
+        """)
         self.add_button.clicked.connect(self.add_new_task)
-        first_row_layout.addWidget(self.add_button)
+        button_column_layout.addWidget(self.add_button)
         
-        # Checkbox Kanban
+        # Checkbox Kanban (pod przyciskiem "+")
         self.kanban_checkbox = QCheckBox("Kanban")
-        self.kanban_checkbox.setMinimumHeight(40)
-        first_row_layout.addWidget(self.kanban_checkbox)
+        self.kanban_checkbox.setFont(QFont("Arial", 9))
+        self.kanban_checkbox.setStyleSheet("""
+            QCheckBox {
+                color: #34495e;
+            }
+            QCheckBox::indicator {
+                width: 18px;
+                height: 18px;
+            }
+            QCheckBox::indicator:unchecked {
+                border: 2px solid #bdc3c7;
+                background-color: white;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                border: 2px solid #27ae60;
+                background-color: #27ae60;
+                border-radius: 3px;
+            }
+        """)
+        self.kanban_checkbox.setCheckable(True)  # Upewnij się że checkbox jest klikalny
+        button_column_layout.addWidget(self.kanban_checkbox)
         
+        first_row_layout.addLayout(button_column_layout)
         add_task_layout.addLayout(first_row_layout)
 
-        # Drugi wiersz - wszystkie opcje w jednej linii (kontrolowane przez ustawienia)
+        # Drugi wiersz - 5 równo rozmieszczonych pól dla wybranych kolumn
         self.second_row_layout = QHBoxLayout()
-        self.second_row_layout.setSpacing(15)
+        self.second_row_layout.setSpacing(10)
+        self.second_row_layout.setContentsMargins(10, 5, 10, 5)  # Dodaj marginesy
         
-        # Kategoria
-        self.category_label = QLabel("Kategoria:")
-        self.second_row_layout.addWidget(self.category_label)
-        self.category_combo = QComboBox()
-        self.category_combo.setMinimumWidth(100)
-        self.load_categories()
-        self.second_row_layout.addWidget(self.category_combo)
+        # Widget kontener dla drugiego wiersza z minimalną wysokością
+        self.second_row_widget = QWidget()
+        self.second_row_widget.setMinimumHeight(40)  # Zapewnij minimalną wysokość
+        self.second_row_widget.setLayout(self.second_row_layout)
         
-        # Separator 1
-        self.separator1 = QLabel("|")
-        self.second_row_layout.addWidget(self.separator1)
+        # Słownik do przechowywania dynamicznych elementów UI
+        self.panel_widgets = {}
+        self.panel_labels = {}
+        self.panel_separators = []
         
-        # Priorytet
-        self.priority_label = QLabel("Priorytet:")
-        self.second_row_layout.addWidget(self.priority_label)
-        self.priority_combo = QComboBox()
-        self.priority_combo.setMinimumWidth(100)
-        self.priority_combo.addItems(["Niski", "Średni", "Wysoki", "Krytyczny"])
-        self.priority_combo.setCurrentText("Średni")
-        self.second_row_layout.addWidget(self.priority_combo)
+        add_task_layout.addWidget(self.second_row_widget)  # Dodaj widget zamiast layout
         
-        # Separator 2
-        self.separator2 = QLabel("|")
-        self.second_row_layout.addWidget(self.separator2)
-        
-        # Data i godzina
-        self.datetime_label = QLabel("Termin:")
-        self.second_row_layout.addWidget(self.datetime_label)
-        self.datetime_edit = QDateTimeEdit()
-        self.datetime_edit.setMinimumWidth(150)
-        self.datetime_edit.setDateTime(QDateTime.currentDateTime())
-        self.datetime_edit.setCalendarPopup(True)
-        self.second_row_layout.addWidget(self.datetime_edit)
-        
-        # Wypełnij pozostałą przestrzeń
-        self.second_row_layout.addStretch()
-        
-        add_task_layout.addLayout(self.second_row_layout)
-        
-        # Inicjalizuj widoczność elementów dolnego paska
+        # Załaduj wszystkie pola i inicjalizuj widoczność elementów dolnego paska
+        self.create_panel_widgets()
         self.update_bottom_panel_visibility()
         
         parent_layout.addWidget(add_task_frame)
+    
+    def task_input_key_press(self, event):
+        """Obsługuje naciśnięcie Enter w polu zadania"""
+        from PyQt6.QtCore import Qt
+        if event.key() == Qt.Key.Key_Return or event.key() == Qt.Key.Key_Enter:
+            if not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                # Enter bez Shift - dodaj zadanie
+                self.add_new_task()
+                return
+        # Dla innych klawiszy i Shift+Enter wywołaj domyślną obsługę
+        QTextEdit.keyPressEvent(self.task_input, event)
+    
+    def create_panel_widgets(self):
+        """Tworzy dynamiczne widgety dla maksymalnie 5 kolumn oznaczonych jako in_panel"""
+        try:
+            print("=" * 60)
+            print("DEBUG: Rozpoczęcie create_panel_widgets()")
+            
+            # Pobierz kolumny oznaczone do dolnego panelu z bazy danych
+            columns = self.db_manager.get_task_columns()
+            print(f"DEBUG: Pobrano {len(columns)} kolumn z bazy")
+            
+            panel_columns = [col for col in columns if col.get('in_panel', False)]
+            print(f"DEBUG: Znaleziono {len(panel_columns)} kolumn z in_panel=True")
+            for col in panel_columns:
+                print(f"  - {col['name']} ({col['type']})")
+            
+            # Wyklucz KanBan z panelu - ma osobny checkbox
+            panel_columns = [col for col in panel_columns if col['name'] != 'KanBan']
+            print(f"DEBUG: Po wykluczeniu KanBan: {len(panel_columns)} kolumn")
+            
+            # Wyczyść wszystkie istniejące widgety z layoutu
+            while self.second_row_layout.count():
+                child = self.second_row_layout.takeAt(0)
+                if child.widget():
+                    child.widget().setParent(None)
+            
+            # Wyczyść słowniki
+            self.panel_widgets.clear()
+            self.panel_labels.clear()
+            self.panel_separators.clear()
+            
+            # Ograniczenie do maksymalnie 5 pól
+            max_fields = 5
+            panel_columns = panel_columns[:max_fields]
+            
+            # Twórz widgety dla każdej kolumny panelu
+            for i, col in enumerate(panel_columns):
+                column_name = col['name']
+                column_type = col['type']
+                
+                # Utwórz odpowiedni widget na podstawie typu kolumny (bez etykiety)
+                widget = None
+                
+                if column_type == "CheckBox":
+                    widget = QCheckBox(column_name)  # Tekst w checkboxie
+                    widget.setMinimumHeight(30)
+                    widget.setFont(QFont("Arial", 9))
+                    widget.setStyleSheet("color: #34495e;")
+                    
+                elif column_type == "Lista":
+                    widget = QComboBox()
+                    widget.setMinimumWidth(120)
+                    widget.setMinimumHeight(30)
+                    widget.setFont(QFont("Arial", 9))
+                    widget.setToolTip(column_name)  # Tooltip jako opis
+                    widget.setStyleSheet("QComboBox { padding: 4px; }")
+                    # Załaduj opcje dla wszystkich list słownikowych
+                    if col.get('dictionary_list_id'):
+                        self.load_dictionary_options(widget, col['dictionary_list_id'])
+                    elif column_name == "TAG":
+                        # TAG może mieć także tagi z task_tags
+                        self.load_tag_options(widget, col.get('dictionary_list_id'))
+                    
+                elif column_type == "Data":
+                    widget = QDateTimeEdit()
+                    widget.setMinimumWidth(140)
+                    widget.setMinimumHeight(30)
+                    widget.setFont(QFont("Arial", 9))
+                    widget.setDateTime(QDateTime.currentDateTime())
+                    widget.setCalendarPopup(True)
+                    widget.setToolTip(column_name)
+                    widget.setStyleSheet("QDateTimeEdit { padding: 4px; }")
+                    
+                elif column_type == "Tekstowa":
+                    widget = QLineEdit()
+                    widget.setMinimumWidth(120)
+                    widget.setMinimumHeight(30)
+                    widget.setFont(QFont("Arial", 9))
+                    widget.setPlaceholderText(column_name)  # Placeholder jako opis
+                    widget.setStyleSheet("QLineEdit { padding: 4px; }")
+                    
+                elif column_type == "Liczbowa":
+                    widget = QSpinBox()
+                    widget.setMinimumWidth(80)
+                    widget.setMinimumHeight(30)
+                    widget.setFont(QFont("Arial", 9))
+                    widget.setRange(0, 999999)
+                    widget.setToolTip(column_name)
+                    widget.setStyleSheet("QSpinBox { padding: 4px; }")
+                    
+                else:
+                    # Dla nieznanych typów użyj pola tekstowego
+                    widget = QLineEdit()
+                    widget.setMinimumWidth(120)
+                    widget.setMinimumHeight(30)
+                    widget.setFont(QFont("Arial", 9))
+                    widget.setPlaceholderText(column_name)
+                    widget.setStyleSheet("QLineEdit { padding: 4px; }")
+                
+                if widget:
+                    self.panel_widgets[column_name] = widget
+                    self.second_row_layout.addWidget(widget, 1)  # Każdy widget ma ten sam stretch
+                    
+                    # Ustaw wartość domyślną jeśli istnieje
+                    default_value = col.get('default_value', '')
+                    if default_value:
+                        self.set_widget_value(widget, default_value, column_type)
+            
+            # Dodaj puste miejsca jeśli mamy mniej niż 5 kolumn
+            for i in range(len(panel_columns), max_fields):
+                empty_label = QLabel("")
+                empty_label.setMinimumHeight(30)
+                self.second_row_layout.addWidget(empty_label, 1)
+            
+            # Specjalne konfiguracje dla znanych kolumn
+            self.setup_special_panel_widgets()
+            
+        except Exception as e:
+            print(f"Błąd podczas tworzenia widgetów panelu: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def load_dictionary_options(self, combo_widget, list_id):
+        """Ładuje opcje ze słownika dla dowolnego ComboBox"""
+        try:
+            if list_id:
+                options = self.db_manager.get_dictionary_list_items(list_id)
+                combo_widget.addItems([item[1] for item in options])  # item[1] to 'value'
+        except Exception as e:
+            print(f"Błąd ładowania opcji słownika (ID: {list_id}): {e}")
+    
+    def load_tag_options(self, combo_widget, list_id):
+        """Ładuje opcje dla kombobox TAG"""
+        try:
+            # Pobierz elementy listy ze słownika
+            if list_id:
+                options = self.db_manager.get_dictionary_list_items(list_id)
+                combo_widget.addItems([item[1] for item in options])  # item[1] to 'value'
+            
+            # Dodatkowo pobierz tagi z tabeli task_tags
+            tags = self.db_manager.get_task_tags()
+            for tag in tags:
+                # tag to tupka: (id, name, color, created_at)
+                tag_name = tag[1]  # tag[1] to 'name'
+                if tag_name not in [combo_widget.itemText(i) for i in range(combo_widget.count())]:
+                    combo_widget.addItem(tag_name)
+                    
+        except Exception as e:
+            print(f"Błąd ładowania opcji TAG: {e}")
+    
+    def setup_special_panel_widgets(self):
+        """Konfiguruje specjalne widgety z predefiniowanymi wartościami"""
+        try:
+            # Pobierz style z theme_manager
+            panel_styles = self.theme_manager.get_add_task_panel_style()
+            
+            # Kategoria - ładuj z kategorii zadań
+            if 'Kategoria' in self.panel_widgets:
+                category_widget = self.panel_widgets['Kategoria']
+                if isinstance(category_widget, QComboBox):
+                    self.load_categories_to_combo(category_widget)
+            
+            # Priorytet - ustaw standardowe opcje
+            if 'Priorytet' in self.panel_widgets:
+                priority_widget = self.panel_widgets['Priorytet']
+                if isinstance(priority_widget, QComboBox):
+                    priority_widget.clear()
+                    priority_widget.addItems(["Niski", "Średni", "Wysoki", "Krytyczny"])
+                    priority_widget.setCurrentText("Średni")
+            
+            # TAG - wszystkie style już zastosowane w create_panel_widgets
+            
+        except Exception as e:
+            print(f"Błąd konfiguracji specjalnych widgetów: {e}")
+    
+    def load_categories_to_combo(self, combo_widget):
+        """Ładuje kategorie do combobox"""
+        try:
+            combo_widget.clear()
+            categories = self.db_manager.get_categories()
+            for category in categories:
+                combo_widget.addItem(category['name'])
+        except Exception as e:
+            print(f"Błąd ładowania kategorii: {e}")
+    
+    def set_widget_value(self, widget, value, column_type):
+        """Ustawia wartość widgetu na podstawie typu kolumny"""
+        try:
+            if column_type == "CheckBox" and isinstance(widget, QCheckBox):
+                widget.setChecked(value.lower() in ['true', '1', 'tak', 'yes'])
+            elif column_type == "Lista" and isinstance(widget, QComboBox):
+                index = widget.findText(value)
+                if index >= 0:
+                    widget.setCurrentIndex(index)
+            elif column_type in ["Data"] and isinstance(widget, QDateTimeEdit):
+                if value:
+                    widget.setDateTime(QDateTime.fromString(value, "yyyy-MM-dd hh:mm:ss"))
+            elif column_type == "Tekstowa" and isinstance(widget, QLineEdit):
+                widget.setText(value)
+            elif column_type == "Liczbowa" and isinstance(widget, QSpinBox):
+                widget.setValue(int(value) if value.isdigit() else 0)
+        except Exception as e:
+            print(f"Błąd ustawiania wartości widgetu: {e}")
+    
+    def get_widget_value(self, widget, column_type):
+        """Pobiera wartość z widgetu na podstawie typu kolumny"""
+        try:
+            if column_type == "CheckBox" and isinstance(widget, QCheckBox):
+                return widget.isChecked()
+            elif column_type == "Lista" and isinstance(widget, QComboBox):
+                return widget.currentText()
+            elif column_type in ["Data"] and isinstance(widget, QDateTimeEdit):
+                return widget.dateTime().toString("yyyy-MM-dd hh:mm:ss")
+            elif column_type == "Tekstowa" and isinstance(widget, QLineEdit):
+                return widget.text()
+            elif column_type == "Liczbowa" and isinstance(widget, QSpinBox):
+                return str(widget.value())
+            else:
+                return ""
+        except Exception as e:
+            print(f"Błąd pobierania wartości widgetu: {e}")
+            return ""
     
     def create_tasks_view(self):
         """Tworzy zaawansowany widok zadań"""
@@ -496,21 +742,33 @@ class TaskManagerApp(QMainWindow):
     
     def create_kanban_view(self):
         """Tworzy widok KanBan"""
-        kanban_widget = QWidget()
-        layout = QVBoxLayout(kanban_widget)
-        
-        title = QLabel("KANBAN")
-        title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(title)
-        
-        # Placeholder dla KanBan
-        placeholder = QLabel("Widok KanBan będzie tutaj...")
-        placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        placeholder.setStyleSheet(self.theme_manager.get_secondary_label_style())
-        layout.addWidget(placeholder)
-        
-        self.stacked_widget.addWidget(kanban_widget)
+        try:
+            from .kanban_view import KanbanView
+            
+            self.kanban_view = KanbanView(self.db_manager, self.theme_manager)
+            
+            # Połącz sygnały
+            self.kanban_view.task_status_changed.connect(self.on_kanban_task_status_changed)
+            self.kanban_view.task_moved.connect(self.on_kanban_task_moved)
+            self.kanban_view.note_requested.connect(self.on_kanban_note_requested)
+            
+            self.stacked_widget.addWidget(self.kanban_view)
+            
+        except Exception as e:
+            print(f"Błąd tworzenia widoku KanBan: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Fallback - placeholder
+            kanban_widget = QWidget()
+            layout = QVBoxLayout(kanban_widget)
+            
+            title = QLabel("KANBAN - Błąd ładowania")
+            title.setFont(QFont("Arial", 16, QFont.Weight.Bold))
+            title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(title)
+            
+            self.stacked_widget.addWidget(kanban_widget)
     
     def create_tables_view(self):
         """Tworzy widok tabel"""
@@ -1410,6 +1668,28 @@ class TaskManagerApp(QMainWindow):
         notif_layout.addWidget(self.sound_check, 1, 0, 1, 2)
         
         layout.addWidget(notif_group)
+        
+        # Grupa backupu bazy danych
+        backup_group = QGroupBox("Backup bazy danych")
+        backup_layout = QGridLayout(backup_group)
+        
+        # Opis
+        backup_desc = QLabel("Eksportuj i importuj całą bazę danych")
+        backup_desc.setWordWrap(True)
+        backup_layout.addWidget(backup_desc, 0, 0, 1, 2)
+        
+        # Przycisk eksportu
+        self.export_backup_btn = QPushButton("📤 Eksportuj backup")
+        self.export_backup_btn.clicked.connect(self.export_database_backup)
+        backup_layout.addWidget(self.export_backup_btn, 1, 0)
+        
+        # Przycisk importu
+        self.import_backup_btn = QPushButton("📥 Importuj backup")
+        self.import_backup_btn.clicked.connect(self.import_database_backup)
+        backup_layout.addWidget(self.import_backup_btn, 1, 1)
+        
+        layout.addWidget(backup_group)
+        
         layout.addStretch()
         
         # Połącz sygnały
@@ -1441,6 +1721,10 @@ class TaskManagerApp(QMainWindow):
             # Aktualizuj motyw w widoku alarmów jeśli istnieje
             if hasattr(self, 'alarms_view'):
                 self.apply_theme_to_alarms_view()
+            
+            # Aktualizuj motyw w widoku KanBan jeśli istnieje
+            if hasattr(self, 'kanban_view'):
+                self.kanban_view.refresh_theme()
             
             # Aktualizuj motyw w widoku tabel
             self.apply_theme_to_tables_view()
@@ -1748,6 +2032,12 @@ class TaskManagerApp(QMainWindow):
         self.load_task_columns()
         self.load_task_tags()
         self.load_task_lists()
+        self.load_task_settings()
+        
+        # Podłącz sygnały do zapisywania ustawień
+        self.archive_completed_check.stateChanged.connect(self.save_task_settings)
+        self.archive_time_spin.valueChanged.connect(self.save_task_settings)
+        self.auto_move_completed_check.stateChanged.connect(self.save_task_settings)
         
         self.settings_tabs.addTab(tab, "Konfiguracja zadań")
     
@@ -2386,43 +2676,168 @@ class TaskManagerApp(QMainWindow):
             self.stacked_widget.setCurrentIndex(view_mapping[view_id])
             if view_id == "tasks":
                 self.refresh_tasks_list()
+            elif view_id == "kanban":
+                # Odśwież widok KanBan przy aktywacji zakładki
+                if hasattr(self, 'kanban_view') and self.kanban_view:
+                    self.kanban_view.load_tasks()
     
     def show_tasks_view(self):
         """Pokazuje widok zadań"""
         self.switch_view("tasks")
     
-    def load_categories(self):
-        """Ładuje kategorie do combo box"""
-        categories = self.db.get_categories()
-        self.category_combo.clear()
-        for category in categories:
-            self.category_combo.addItem(category[1])  # category[1] to nazwa
-    
     def add_new_task(self):
-        """Dodaje nowe zadanie"""
+        """Dodaje nowe zadanie z wykorzystaniem wszystkich pól dolnego panelu"""
         task_text = self.task_input.toPlainText().strip()
         if not task_text:
             return
         
-        category = self.category_combo.currentText()
-        priority_map = {"Niski": "low", "Średni": "medium", "Wysoki": "high", "Krytyczny": "critical"}
-        priority = priority_map.get(self.priority_combo.currentText(), "medium")
-        due_date = self.datetime_edit.dateTime().toString("yyyy-MM-dd hh:mm:ss")
-        
-        # Dodaj zadanie do bazy danych
-        self.db.add_task(
-            title=task_text,
-            category=category,
-            priority=priority,
-            due_date=due_date
-        )
-        
-        # Wyczyść pole tekstowe
-        self.task_input.clear()
-        
-        # Odśwież listę zadań jeśli jesteśmy w widoku zadań
-        if self.stacked_widget.currentIndex() == 0:
-            self.refresh_tasks_list()
+        try:
+            # Zbierz dane ze wszystkich widocznych pól dolnego panelu
+            task_data = {"title": task_text}
+            
+            # Dodaj stan checkboxa Kanban
+            if hasattr(self, 'kanban_checkbox'):
+                task_data["kanban"] = self.kanban_checkbox.isChecked()
+            
+            # Pobierz wszystkie kolumny i ich typy
+            columns = self.db_manager.get_task_columns()
+            columns_dict = {col['name']: col for col in columns}
+            
+            # Zbierz wartości z widgetów panelu
+            for column_name, widget in self.panel_widgets.items():
+                if column_name in columns_dict:
+                    column_type = columns_dict[column_name]['type']
+                    column_id = columns_dict[column_name].get('id')
+                    value = self.get_widget_value(widget, column_type)
+                    
+                    # Pomiń puste wartości
+                    if not value or (isinstance(value, str) and not value.strip()):
+                        continue
+                    
+                    # Mapuj nazwy kolumn na pola bazy danych
+                    if column_name == "Kategoria":
+                        task_data["category"] = value
+                    elif column_name == "Termin" or column_name == "Data realizacji":
+                        task_data["due_date"] = value
+                    elif column_name == "TAG":
+                        task_data["tag"] = value
+                    elif column_name == "KanBan":
+                        task_data["kanban"] = value
+                    elif column_name == "Notatka":
+                        task_data["note"] = value
+                    elif column_name == "Status":
+                        task_data["completed"] = value
+                    else:
+                        # Dla kolumn użytkownika (Prio, Priorytet) zachowaj oryginalną nazwę
+                        task_data[column_name] = value
+            
+            # Dodaj zadanie do bazy danych za pomocą rozszerzonej metody
+            task_id = self.add_task_to_database(task_data)
+            
+            if task_id:
+                # Wyczyść wszystkie pola
+                self.task_input.clear()
+                self.clear_panel_widgets()
+                if hasattr(self, 'kanban_checkbox'):
+                    self.kanban_checkbox.setChecked(False)
+                
+                # Odśwież listę zadań jeśli jesteśmy w widoku zadań
+                if self.stacked_widget.currentIndex() == 0:
+                    self.refresh_tasks_list()
+                    
+                print(f"Dodano zadanie z ID: {task_id}")
+            else:
+                print("Błąd podczas dodawania zadania")
+                
+        except Exception as e:
+            print(f"Błąd podczas dodawania nowego zadania: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def add_task_to_database(self, task_data):
+        """Dodaje zadanie do bazy danych z rozszerzonymi danymi"""
+        try:
+            # Przygotuj description z pól tekstowych
+            description_parts = []
+            if task_data.get("note"):
+                description_parts.append(f"Notatka: {task_data.get('note')}")
+            description = "\n".join(description_parts) if description_parts else task_data.get("description", "")
+            
+            # Pobierz wartość kanban (domyślnie 0 jeśli nie zaznaczona)
+            kanban_value = 1 if task_data.get("kanban", False) else 0
+            
+            # Użyj istniejącej metody add_task z podstawowymi parametrami
+            task_id = self.db.add_task(
+                title=task_data.get("title", ""),
+                description=description,
+                category=task_data.get("category", ""),
+                priority=task_data.get("priority", "medium"),
+                due_date=task_data.get("due_date", ""),
+                kanban=kanban_value
+            )
+            
+            if task_id:
+                # Zapisz wartości niestandardowych kolumn (wszystkie kolumny użytkownika)
+                # Użyj bezpośredniego zapytania SQL do aktualizacji dodatkowych pól
+                with self.db.get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    # Dla TAG - zapisz jako categorię jeśli nie ma kategorii
+                    if task_data.get("tag") and not task_data.get("category"):
+                        cursor.execute('UPDATE tasks SET category = ? WHERE id = ?', 
+                                     (task_data.get("tag"), task_id))
+                    
+                    # Pobierz wszystkie kolumny użytkownika z bazy
+                    all_columns = self.db_manager.get_task_columns()
+                    standard_columns = {'ID', 'Data dodania', 'Status', 'Zadanie', 'Notatka', 
+                                       'Data realizacji', 'KanBan', 'Archiwum', 'TAG'}
+                    
+                    # Znajdź kolumny użytkownika które mają wartości w task_data
+                    user_column_values = []
+                    for col in all_columns:
+                        col_name = col['name']
+                        # Pomiń kolumny standardowe
+                        if col_name in standard_columns:
+                            continue
+                        # Sprawdź czy mamy wartość dla tej kolumny
+                        if col_name in task_data and task_data[col_name]:
+                            user_column_values.append(f"{col_name}: {task_data[col_name]}")
+                    
+                    # Zapisz wartości kolumn użytkownika w description jako metadata
+                    if user_column_values:
+                        # Dodaj metadata do description
+                        cursor.execute('SELECT description FROM tasks WHERE id = ?', (task_id,))
+                        current_desc = cursor.fetchone()[0] or ""
+                        new_desc = current_desc + "\n" + "\n".join(user_column_values) if current_desc else "\n".join(user_column_values)
+                        cursor.execute('UPDATE tasks SET description = ? WHERE id = ?', (new_desc, task_id))
+                    
+                    conn.commit()
+            
+            return task_id
+            
+        except Exception as e:
+            print(f"Błąd dodawania zadania do bazy danych: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def clear_panel_widgets(self):
+        """Czyści wszystkie widgety w dolnym panelu"""
+        try:
+            for column_name, widget in self.panel_widgets.items():
+                if isinstance(widget, QCheckBox):
+                    widget.setChecked(False)
+                elif isinstance(widget, QComboBox):
+                    widget.setCurrentIndex(0)
+                elif isinstance(widget, QDateTimeEdit):
+                    widget.setDateTime(QDateTime.currentDateTime())
+                elif isinstance(widget, QLineEdit):
+                    widget.clear()
+                elif isinstance(widget, QSpinBox):
+                    widget.setValue(0)
+                    
+        except Exception as e:
+            print(f"Błąd czyszczenia widgetów panelu: {e}")
     
     def refresh_tasks_list(self):
         """Odświeża listę zadań - nowa implementacja dla zaawansowanego widoku"""
@@ -2455,6 +2870,35 @@ class TaskManagerApp(QMainWindow):
             print(f"Usunięto zadanie {task_id}")
         except Exception as e:
             print(f"Błąd podczas usuwania zadania: {e}")
+    
+    def on_kanban_task_status_changed(self, task_id, completed):
+        """Obsługuje zmianę statusu zadania w widoku KanBan"""
+        try:
+            # Odśwież widok zadań jeśli jest aktywny
+            if hasattr(self, 'tasks_view') and self.tasks_view:
+                self.tasks_view.load_tasks()
+            print(f"Zadanie {task_id} oznaczone jako {'zakończone' if completed else 'w trakcie'}")
+        except Exception as e:
+            print(f"Błąd zmiany statusu zadania: {e}")
+    
+    def on_kanban_task_moved(self, task_id, new_status):
+        """Obsługuje przeniesienie zadania między kolumnami w KanBan"""
+        try:
+            # Odśwież widok zadań jeśli jest aktywny
+            if hasattr(self, 'tasks_view') and self.tasks_view:
+                self.tasks_view.load_tasks()
+            print(f"Zadanie {task_id} przeniesione do: {new_status}")
+        except Exception as e:
+            print(f"Błąd przenoszenia zadania: {e}")
+    
+    def on_kanban_note_requested(self, task_id):
+        """Obsługuje żądanie otwarcia notatki z widoku KanBan"""
+        try:
+            # Użyj tej samej logiki co w widoku zadań
+            if hasattr(self, 'tasks_view') and self.tasks_view:
+                self.tasks_view.open_task_note(task_id)
+        except Exception as e:
+            print(f"Błąd otwierania notatki: {e}")
     
     def setup_note_buttons_functionality(self):
         """Ustawia funkcjonalność przycisków notatek w widoku zadań"""
@@ -2785,7 +3229,7 @@ class TaskManagerApp(QMainWindow):
                 "Data dodania": {"locked_visible": False, "locked_panel": False}, 
                 "Status": {"locked_visible": True, "locked_panel": True},
                 "Zadanie": {"locked_visible": True, "locked_panel": True},
-                "Notatka": {"locked_visible": False, "locked_panel": False},
+                "Notatka": {"locked_visible": False, "locked_panel": True},  # Notatka zablokowana w panelu
                 "TAG": {"locked_visible": False, "locked_panel": False},
                 "Data realizacji": {"locked_visible": False, "locked_panel": True},
                 "KanBan": {"locked_visible": True, "locked_panel": False},
@@ -2876,6 +3320,7 @@ class TaskManagerApp(QMainWindow):
                 panel_combo = QComboBox()
                 panel_combo.addItems(["Tak", "Nie"])
                 panel_combo.setCurrentText("Tak" if col["in_panel"] else "Nie")
+                
                 # Połącz sygnały zmiany
                 panel_combo.currentTextChanged.connect(lambda text, row=row: self.on_column_panel_changed(row, text))
                 panel_combo.currentTextChanged.connect(self.update_bottom_panel_visibility)
@@ -2898,6 +3343,10 @@ class TaskManagerApp(QMainWindow):
                     default_item.setFlags(default_item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                     default_item.setBackground(alternate_color)
                 self.columns_table.setItem(row, 4, default_item)
+            
+            # Odśwież widgety dolnego panelu po załadowaniu kolumn
+            if hasattr(self, 'panel_widgets'):
+                self.create_panel_widgets()
             
         except Exception as e:
             print(f"Błąd ładowania kolumn: {e}")
@@ -2980,6 +3429,113 @@ class TaskManagerApp(QMainWindow):
                 
         except Exception as e:
             print(f"Błąd ładowania list zadań: {e}")
+    
+    def load_task_settings(self):
+        """Ładuje ustawienia zadań z bazy danych"""
+        try:
+            # Archiwizacja
+            archive_enabled = self.db_manager.get_setting('task_archive_enabled', '0')
+            self.archive_completed_check.setChecked(archive_enabled == '1')
+            
+            archive_days = self.db_manager.get_setting('task_archive_days', '30')
+            self.archive_time_spin.setValue(int(archive_days))
+            
+            # Automatyczne przenoszenie
+            auto_move = self.db_manager.get_setting('task_auto_move_completed', '0')
+            self.auto_move_completed_check.setChecked(auto_move == '1')
+            
+            # Uruchom timer archiwizacji jeśli jest włączona
+            if archive_enabled == '1':
+                self.start_archive_timer()
+            
+        except Exception as e:
+            print(f"Błąd ładowania ustawień zadań: {e}")
+    
+    def save_task_settings(self):
+        """Zapisuje ustawienia zadań do bazy danych"""
+        try:
+            # Archiwizacja
+            archive_enabled = '1' if self.archive_completed_check.isChecked() else '0'
+            self.db_manager.set_setting('task_archive_enabled', archive_enabled)
+            
+            archive_days = str(self.archive_time_spin.value())
+            self.db_manager.set_setting('task_archive_days', archive_days)
+            
+            # Automatyczne przenoszenie
+            auto_move = '1' if self.auto_move_completed_check.isChecked() else '0'
+            self.db_manager.set_setting('task_auto_move_completed', auto_move)
+            
+            # Restart timera archiwizacji
+            if archive_enabled == '1':
+                self.start_archive_timer()
+            else:
+                self.stop_archive_timer()
+            
+            print(f"Zapisano ustawienia zadań: archiwizacja={archive_enabled}, dni={archive_days}")
+            
+        except Exception as e:
+            print(f"Błąd zapisywania ustawień zadań: {e}")
+    
+    def start_archive_timer(self):
+        """Uruchamia timer sprawdzający zadania do archiwizacji"""
+        if not hasattr(self, 'archive_timer'):
+            from PyQt6.QtCore import QTimer
+            self.archive_timer = QTimer(self)
+            self.archive_timer.timeout.connect(self.check_tasks_for_archiving)
+        
+        # Sprawdzaj co godzinę (3600000 ms)
+        self.archive_timer.start(3600000)
+        # Wykonaj pierwsze sprawdzenie od razu
+        self.check_tasks_for_archiving()
+    
+    def stop_archive_timer(self):
+        """Zatrzymuje timer archiwizacji"""
+        if hasattr(self, 'archive_timer'):
+            self.archive_timer.stop()
+    
+    def check_tasks_for_archiving(self):
+        """Sprawdza i archiwizuje stare ukończone zadania"""
+        try:
+            if not self.archive_completed_check.isChecked():
+                return
+            
+            days = self.archive_time_spin.value()
+            cutoff_date = datetime.datetime.now() - datetime.timedelta(days=days)
+            
+            # Pobierz wszystkie ukończone zadania
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT id, updated_at FROM tasks 
+                    WHERE status = 'completed' AND archived = 0
+                ''')
+                tasks = cursor.fetchall()
+                
+                archived_count = 0
+                for task in tasks:
+                    task_id, updated_at_str = task
+                    # Parsuj datę
+                    try:
+                        updated_at = datetime.datetime.strptime(updated_at_str, "%Y-%m-%d %H:%M:%S")
+                        if updated_at < cutoff_date:
+                            # Archiwizuj zadanie
+                            cursor.execute('UPDATE tasks SET archived = 1 WHERE id = ?', (task_id,))
+                            archived_count += 1
+                    except:
+                        pass
+                
+                conn.commit()
+                
+                if archived_count > 0:
+                    print(f"Automatycznie zarchiwizowano {archived_count} zadań")
+                    # Odśwież widok zadań jeśli jest otwarty
+                    if hasattr(self, 'tasks_view') and self.tasks_view:
+                        self.tasks_view.load_tasks()
+                        
+        except Exception as e:
+            print(f"Błąd podczas automatycznej archiwizacji: {e}")
+            import traceback
+            traceback.print_exc()
     
     def add_task_tag(self):
         """Dodaje nową kategorię jako tag zadania z kolorem"""
@@ -3567,67 +4123,137 @@ class TaskManagerApp(QMainWindow):
         try:
             name_item = self.columns_table.item(row, 0)
             if name_item:
+                column_name = name_item.text()
                 column_id = name_item.data(Qt.ItemDataRole.UserRole)
-                if column_id:  # Tylko dla kolumn niestandardowych
-                    in_panel = (text == "Tak")
+                in_panel = (text == "Tak")
+                
+                if column_id:  # Kolumny z ID - aktualizuj przez ID
                     self.db_manager.update_task_column(column_id, in_panel=in_panel)
+                else:  # Kolumny bez ID - aktualizuj przez nazwę
+                    self.db_manager.update_task_column_by_name(column_name, in_panel=in_panel)
+                    
+                # Odśwież widgety dolnego panelu po zmianie ustawień
+                self.create_panel_widgets()
+                
         except Exception as e:
             print(f"Błąd zmiany ustawienia panelu: {e}")
+            import traceback
+            traceback.print_exc()
     
     def update_bottom_panel_visibility(self):
         """Aktualizuje widoczność elementów w dolnym pasku na podstawie ustawień"""
         try:
-            # Mapowanie nazw kolumn na elementy UI
-            column_elements = {
-                'Kategoria': [self.category_label, self.category_combo],
-                'Priorytet': [self.priority_label, self.priority_combo],
-                'Termin': [self.datetime_label, self.datetime_edit]
-            }
-            
-            # Znajdź kolumny oznaczone do dolnego paska
-            visible_columns = []
-            if hasattr(self, 'columns_table'):
-                for row in range(self.columns_table.rowCount()):
-                    name_item = self.columns_table.item(row, 0)
-                    panel_widget = self.columns_table.cellWidget(row, 3)
-                    if name_item and panel_widget:
-                        column_name = name_item.text()
-                        # Sprawdź czy to ComboBox czy CheckBox
-                        is_visible = False
-                        if isinstance(panel_widget, QComboBox):
-                            is_visible = panel_widget.currentText() == "Tak"
-                        elif isinstance(panel_widget, QCheckBox):
-                            is_visible = panel_widget.isChecked()
+            # Odśwież widgety panelu kiedy ustawienia się zmieniają
+            self.create_panel_widgets()
                         
-                        if is_visible and column_name in column_elements:
-                            visible_columns.append(column_name)
-            else:
-                # Domyślnie pokaż wszystkie kolumny
-                visible_columns = ['Kategoria', 'Priorytet', 'Termin']
-            
-            # Aktualizuj widoczność elementów
-            separator_count = 0
-            for column_name, elements in column_elements.items():
-                is_visible = column_name in visible_columns
-                for element in elements:
-                    element.setVisible(is_visible)
-                
-                # Pokaż separator tylko między widocznymi elementami
-                if is_visible and separator_count < 2:
-                    if separator_count == 0 and hasattr(self, 'separator1'):
-                        self.separator1.setVisible(len(visible_columns) > 1)
-                    elif separator_count == 1 and hasattr(self, 'separator2'):
-                        self.separator2.setVisible(len(visible_columns) > 2)
-                    separator_count += 1
-            
-            # Ukryj separatory jeśli nie są potrzebne
-            if hasattr(self, 'separator1'):
-                self.separator1.setVisible(len(visible_columns) > 1)
-            if hasattr(self, 'separator2'):
-                self.separator2.setVisible(len(visible_columns) > 2)
-                
         except Exception as e:
             print(f"Błąd aktualizacji widoczności dolnego paska: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def export_database_backup(self):
+        """Eksportuje backup bazy danych"""
+        try:
+            # Pobierz ścieżkę do bazy danych
+            db_path = self.db_manager.db_path
+            
+            # Utwórz BackupManager
+            backup_manager = BackupManager(db_path)
+            
+            # Otwórz dialog wyboru lokalizacji zapisu
+            default_filename = f"prokopo_backup_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Eksportuj backup bazy danych",
+                default_filename,
+                "Pliki bazy danych (*.db);;Wszystkie pliki (*.*)"
+            )
+            
+            if file_path:
+                # Eksportuj backup
+                success, message = backup_manager.export_backup(file_path)
+                
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "Sukces",
+                        f"Backup został pomyślnie wyeksportowany!\n\n{message}\n\nLokalizacja: {file_path}"
+                    )
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Błąd",
+                        f"Nie udało się wyeksportować backupu:\n\n{message}"
+                    )
+                    
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Błąd",
+                f"Wystąpił błąd podczas eksportu backupu:\n\n{str(e)}"
+            )
+            import traceback
+            traceback.print_exc()
+    
+    def import_database_backup(self):
+        """Importuje backup bazy danych"""
+        try:
+            # Ostrzeżenie przed importem
+            reply = QMessageBox.warning(
+                self,
+                "Ostrzeżenie",
+                "Import backupu nadpisze całą aktualną bazę danych!\n\n"
+                "Przed kontynuowaniem zostanie utworzony automatyczny backup aktualnej bazy.\n\n"
+                "Czy na pewno chcesz kontynuować?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+            
+            # Otwórz dialog wyboru pliku backupu
+            file_path, _ = QFileDialog.getOpenFileName(
+                self,
+                "Importuj backup bazy danych",
+                "",
+                "Pliki bazy danych (*.db);;Wszystkie pliki (*.*)"
+            )
+            
+            if file_path:
+                # Pobierz ścieżkę do bazy danych
+                db_path = self.db_manager.db_path
+                
+                # Utwórz BackupManager
+                backup_manager = BackupManager(db_path)
+                
+                # Importuj backup (BackupManager sam tworzy automatyczny backup)
+                success, message = backup_manager.import_backup(file_path)
+                
+                if success:
+                    QMessageBox.information(
+                        self,
+                        "Sukces",
+                        f"{message}\n\n"
+                        "Aplikacja zostanie zamknięta. Uruchom ją ponownie, aby zobaczyć zaimportowane dane."
+                    )
+                    # Zamknij aplikację
+                    QApplication.quit()
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Błąd",
+                        f"Nie udało się zaimportować backupu:\n\n{message}"
+                    )
+                    
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Błąd",
+                f"Wystąpił błąd podczas importu backupu:\n\n{str(e)}"
+            )
+            import traceback
+            traceback.print_exc()
 
 def main():
     app = QApplication(sys.argv)

@@ -104,7 +104,7 @@ class TasksView(QWidget):
         controls_layout.addWidget(status_label)
 
         self.status_filter = QComboBox()
-        self.status_filter.addItems(["Wszystkie", "Aktywne", "Zakończone"])
+        self.status_filter.addItems(["Wszystkie", "Aktywne", "Zakończone", "Zarchiwizowane"])
         self.status_filter.setStyleSheet(self.theme_manager.get_combo_style())
         self.status_filter.currentTextChanged.connect(self.filter_tasks)
         controls_layout.addWidget(self.status_filter)
@@ -341,8 +341,28 @@ class TasksView(QWidget):
                     'tag': task[5],  # category (używane jako tag)
                     'date_completed': task[8] if task[3] == 'completed' else None,  # updated_at jeśli completed
                     'kanban_status': 'DONE' if task[3] == 'completed' else 'TODO',
-                    'archived': False  # TODO: dodać kolumnę archived do tasks jeśli potrzebna
+                    'archived': task[11] == 1 if len(task) > 11 else False,  # flaga archived
+                    'kanban': task[10] if len(task) > 10 else 0  # flaga kanban
                 }
+                
+                # Parsuj description aby wyciągnąć wartości kolumn użytkownika
+                description = task[2]  # description
+                if description:
+                    # Pobierz wszystkie kolumny użytkownika
+                    all_columns = self.db_manager.get_task_columns()
+                    standard_columns = {'ID', 'Data dodania', 'Status', 'Zadanie', 'Notatka', 
+                                       'Data realizacji', 'KanBan', 'Archiwum', 'TAG'}
+                    
+                    # Wyciągnij wartości dla wszystkich kolumn użytkownika z description
+                    for line in description.split('\n'):
+                        if ':' in line:
+                            # Sprawdź czy linia zaczyna się od nazwy kolumny użytkownika
+                            for col in all_columns:
+                                col_name = col['name']
+                                if col_name not in standard_columns and line.startswith(f'{col_name}:'):
+                                    value = line.replace(f'{col_name}:', '').strip()
+                                    task_dict[col_name] = value
+                                    break
                 
                 # Dodaj kolor kategorii jako kolor tagu
                 tag_name = task_dict.get('tag')
@@ -503,9 +523,11 @@ class TasksView(QWidget):
                 # KanBan
                 kanban_col = self.get_column_index("KanBan")
                 if kanban_col is not None:
-                    kanban_btn = QPushButton("📊")
+                    # Sprawdź czy zadanie jest już w KanBan
+                    is_in_kanban = task.get('kanban', 0) == 1
+                    kanban_btn = QPushButton("✓ 📊" if is_in_kanban else "📊")
                     kanban_btn.setStyleSheet(self.theme_manager.get_button_style())
-                    kanban_btn.clicked.connect(lambda checked, task_id=task['id']: self.move_to_kanban(task_id))
+                    kanban_btn.clicked.connect(lambda checked, task_id=task['id'], in_kanban=is_in_kanban: self.toggle_kanban(task_id, in_kanban))
                     self.tasks_table.setCellWidget(row, kanban_col, kanban_btn)
 
                 # Archiwum (checkbox)
@@ -666,15 +688,29 @@ class TasksView(QWidget):
         """Przełącza status archiwizacji zadania"""
         try:
             archived = (state == Qt.CheckState.Checked.value)
-            # TODO: Zapisz status archiwizacji w bazie danych
             print(f"Zadanie {task_id} - Archiwum: {archived}")
+            
+            # Zapisz status archiwizacji w bazie danych
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE tasks SET archived = ? WHERE id = ?', (1 if archived else 0, task_id))
+                conn.commit()
+            
             # Aktualizuj lokalnie
             for task in self.current_tasks:
                 if task['id'] == task_id:
                     task['archived'] = archived
                     break
+            
+            # Odśwież widok jeśli filtr nie pokazuje zarchiwizowanych
+            status_filter = self.status_filter.currentText()
+            if status_filter != "Zarchiwizowane" and archived:
+                self.populate_table()
+            
         except Exception as e:
             print(f"Błąd zmiany statusu archiwizacji: {e}")
+            import traceback
+            traceback.print_exc()
     
     def filter_tasks_data(self):
         """Filtruje zadania według ustawionych kryteriów"""
@@ -683,9 +719,17 @@ class TasksView(QWidget):
         # Filtr statusu
         status_filter = self.status_filter.currentText()
         if status_filter == "Aktywne":
-            filtered = [task for task in filtered if not task['status']]
+            # Aktywne = niezakończone i niezarchiwizowane
+            filtered = [task for task in filtered if not task['status'] and not task.get('archived', False)]
         elif status_filter == "Zakończone":
-            filtered = [task for task in filtered if task['status']]
+            # Zakończone = zakończone ale niezarchiwizowane
+            filtered = [task for task in filtered if task['status'] and not task.get('archived', False)]
+        elif status_filter == "Zarchiwizowane":
+            # Tylko zarchiwizowane
+            filtered = [task for task in filtered if task.get('archived', False)]
+        else:  # "Wszystkie"
+            # Wszystkie bez zarchiwizowanych
+            filtered = [task for task in filtered if not task.get('archived', False)]
             
         # Filtr TAG
         tag_filter = self.tag_filter.currentText()
@@ -696,6 +740,12 @@ class TasksView(QWidget):
         search_text = self.search_input.text().lower()
         if search_text:
             filtered = [task for task in filtered if search_text in task['task'].lower()]
+        
+        # Automatyczne przenoszenie ukończonych pod nieukończone
+        auto_move = self.db_manager.get_setting('task_auto_move_completed', 'false')
+        if auto_move == 'true':
+            # Sortuj: nieukończone (False) na górze, ukończone (True) na dole
+            filtered.sort(key=lambda t: (t['status'], t['id']))
             
         return filtered
         
@@ -747,10 +797,29 @@ class TasksView(QWidget):
         # TODO: Integracja z systemem notatek
         print(f"Otwieranie notatki dla zadania {task_id}")
         
-    def move_to_kanban(self, task_id):
-        """Przenosi zadanie do KanBan"""
-        # TODO: Integracja z systemem KanBan
-        print(f"Przenoszenie zadania {task_id} do KanBan")
+    def toggle_kanban(self, task_id, currently_in_kanban):
+        """Przełącza stan zadania w KanBan (dodaje lub usuwa)"""
+        try:
+            # Odwróć stan - jeśli jest w kanban, usuń; jeśli nie ma, dodaj
+            new_kanban_value = 0 if currently_in_kanban else 1
+            action = "usunięte z" if currently_in_kanban else "przeniesione do"
+            
+            print(f"Zadanie {task_id} {action} KanBan")
+            
+            # Aktualizuj flagę kanban w bazie danych
+            with self.db_manager.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('UPDATE tasks SET kanban = ? WHERE id = ?', (new_kanban_value, task_id))
+                conn.commit()
+            
+            # Odśwież widok zadań aby pokazać zmianę
+            self.load_tasks()
+            
+            print(f"Zadanie {task_id} - flaga kanban ustawiona na {new_kanban_value}")
+        except Exception as e:
+            print(f"Błąd przełączania zadania w KanBan: {e}")
+            import traceback
+            traceback.print_exc()
         
     def show_context_menu(self, position):
         """Pokazuje menu kontekstowe dla tabeli"""
@@ -781,26 +850,52 @@ class TasksView(QWidget):
         menu.addSeparator()
         note_action = menu.addAction("📝 Otwórz notatkę")
         kanban_action = menu.addAction("📊 Przenieś do KanBan")
+        archive_action = menu.addAction("📦 Archiwizuj")
         
         action = menu.exec(self.tasks_table.mapToGlobal(position))
         
+        if action:
+            print(f"DEBUG: Wybrana akcja z menu: {action.text()}")
+        else:
+            print("DEBUG: Brak wybranej akcji (anulowano)")
+            return
+        
         row = self.tasks_table.rowAt(position.y())
-        if row >= 0:
-            # Pobierz ID zadania z kolumny ID
-            id_col = self.get_column_index("ID")
-            if id_col is not None:
-                id_item = self.tasks_table.item(row, id_col)
-                if id_item:
-                    task_id = int(id_item.text())
-                    
-                    if action == edit_action:
-                        self.edit_task(task_id)
-                    elif action == delete_action:
-                        self.delete_task(task_id)
-                    elif action == note_action:
-                        self.open_task_note(task_id)
-                    elif action == kanban_action:
-                        self.move_to_kanban(task_id)
+        print(f"DEBUG: Wiersz: {row}")
+        
+        if row >= 0 and row < len(self._row_task_ids):
+            # Pobierz ID zadania z mapy wiersz -> ID
+            task_id = self._row_task_ids[row]
+            print(f"DEBUG: Zadanie ID z _row_task_ids: {task_id}")
+            
+            if action == edit_action:
+                self.edit_task(task_id)
+            elif action == delete_action:
+                self.delete_task(task_id)
+            elif action == note_action:
+                self.open_task_note(task_id)
+            elif action == kanban_action:
+                # Pobierz aktualny stan kanban dla zadania
+                current_kanban = False
+                for task in self.current_tasks:
+                    if task['id'] == task_id:
+                        current_kanban = task.get('kanban', 0) == 1
+                        break
+                self.toggle_kanban(task_id, current_kanban)
+            elif action == archive_action:
+                print(f"DEBUG: ARCHIVE_ACTION wykryty!")
+                # Pobierz aktualny stan archiwizacji dla zadania
+                current_archived = False
+                for task in self.current_tasks:
+                    if task['id'] == task_id:
+                        current_archived = task.get('archived', False)
+                        break
+                print(f"DEBUG: Archiwizacja zadania {task_id}, aktualny stan: {current_archived}")
+                # Jeśli zadanie nie jest zarchiwizowane, zaarchiwizuj (Checked)
+                # Jeśli jest zarchiwizowane, odarchiwizuj (Unchecked)
+                new_state = Qt.CheckState.Checked.value if not current_archived else Qt.CheckState.Unchecked.value
+                print(f"DEBUG: Nowy stan: {new_state}")
+                self.toggle_task_archive(task_id, new_state)
                 
     def edit_task(self, task_id):
         """Edytuje zadanie"""

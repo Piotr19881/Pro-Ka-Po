@@ -790,20 +790,20 @@ class ThemeManager:
         """
     
     def get_date_edit_style(self):
-        """Zwraca styl dla QDateEdit/QDateTimeEdit"""
+        """Zwraca styl dla QDateEdit/QDateTimeEdit/QTimeEdit"""
         colors = self.get_current_colors()
         return f"""
-            QDateEdit, QDateTimeEdit {{
+            QDateEdit, QDateTimeEdit, QTimeEdit {{
                 color: {colors['text_color']};
                 background-color: {colors['widget_bg']};
                 border: 1px solid {colors['border_color']};
                 border-radius: 4px;
                 padding: 5px;
             }}
-            QDateEdit:focus, QDateTimeEdit:focus {{
+            QDateEdit:focus, QDateTimeEdit:focus, QTimeEdit:focus {{
                 border: 2px solid {colors['text_color']};
             }}
-            QDateEdit::drop-down, QDateTimeEdit::drop-down {{
+            QDateEdit::drop-down, QDateTimeEdit::drop-down, QTimeEdit::drop-down {{
                 border: none;
             }}
         """
@@ -962,3 +962,132 @@ class ThemeManager:
                 text-align: center;
             }}
         """
+    
+    def get_add_task_panel_style(self):
+        """Zwraca style dla panelu dodawania zadań"""
+        return self._get_cached_style('add_task_panel', self._generate_add_task_panel_style)
+    
+    def _generate_add_task_panel_style(self):
+        """Generuje style dla panelu dodawania zadań"""
+        colors = self.get_current_colors()
+        
+        return {
+            'frame': f"""
+                QFrame {{
+                    background-color: {colors['widget_bg']};
+                    border: 2px solid {colors['border_color']};
+                    border-radius: 8px;
+                    margin: 5px;
+                }}
+            """,
+            
+            'title': f"""
+                QLabel {{
+                    color: {colors['text_color']};
+                    font-family: {colors['font_family']};
+                    font-size: 14px;
+                    font-weight: bold;
+                    margin-bottom: 5px;
+                    background-color: transparent;
+                }}
+            """,
+            
+            'field_label': f"""
+                QLabel {{
+                    color: {colors['text_secondary']};
+                    font-family: {colors['font_family']};
+                    font-size: 10px;
+                    font-weight: bold;
+                    background-color: transparent;
+                    margin-right: 5px;
+                }}
+            """,
+            
+            'task_input': f"""
+                QTextEdit {{
+                    background-color: {colors['widget_bg']};
+                    border: 2px solid {colors['border_color']};
+                    border-radius: 6px;
+                    padding: 8px;
+                    font-family: {colors['font_family']};
+                    font-size: 10px;
+                    color: {colors['text_color']};
+                }}
+                QTextEdit:focus {{
+                    border-color: {colors.get('accent_color', '#3498db')};
+                }}
+            """,
+            
+            'add_button': f"""
+                QPushButton {{
+                    background-color: {colors.get('accent_color', '#3498db')};
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    padding: 8px 12px;
+                    font-family: {colors['font_family']};
+                    font-size: 10px;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background-color: {colors.get('accent_hover', '#2980b9')};
+                }}
+                QPushButton:pressed {{
+                    background-color: {colors.get('accent_pressed', '#21618c')};
+                }}
+            """,
+            
+            'panel_widget': f"""
+                QComboBox, QLineEdit, QSpinBox, QDateTimeEdit {{
+                    background-color: {colors['widget_bg']};
+                    border: 2px solid {colors['border_color']};
+                    border-radius: 4px;
+                    padding: 5px;
+                    font-family: {colors['font_family']};
+                    font-size: 9px;
+                    color: {colors['text_color']};
+                }}
+                QComboBox:focus, QLineEdit:focus, QSpinBox:focus, QDateTimeEdit:focus {{
+                    border-color: {colors.get('accent_color', '#3498db')};
+                }}
+                QComboBox::drop-down {{
+                    border: none;
+                    width: 20px;
+                }}
+                QComboBox::down-arrow {{
+                    width: 12px;
+                    height: 12px;
+                }}
+            """,
+            
+            'checkbox': f"""
+                QCheckBox {{
+                    color: {colors['text_color']};
+                    font-family: {colors['font_family']};
+                    font-size: 9px;
+                    background-color: transparent;
+                }}
+                QCheckBox::indicator {{
+                    width: 16px;
+                    height: 16px;
+                    border: 2px solid {colors['border_color']};
+                    border-radius: 3px;
+                    background-color: {colors['widget_bg']};
+                }}
+                QCheckBox::indicator:checked {{
+                    background-color: {colors.get('accent_color', '#3498db')};
+                    border-color: {colors.get('accent_color', '#3498db')};
+                }}
+            """,
+            
+            'separator': f"""
+                QLabel {{
+                    color: {colors['text_secondary']};
+                    font-family: {colors['font_family']};
+                    font-size: 12px;
+                    font-weight: bold;
+                    background-color: transparent;
+                    margin: 0 10px;
+                }}
+            """
+        }

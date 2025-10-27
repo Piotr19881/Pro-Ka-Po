@@ -222,13 +222,34 @@ class AlarmsView(QWidget):
             
         # Pobierz słownik aktualnego motywu
         theme_dict = self.theme_manager.get_current_theme_dict()
+        colors = self.theme_manager.get_current_colors()
         
-        # Główne tło widoku
+        # Główne tło widoku z prawidłowym kolorem tekstu
         main_style = f"""
             AlarmsView {{
                 background-color: {theme_dict['background']};
-                color: {theme_dict['text']};
+                color: {colors['text_color']};
                 font-family: 'Segoe UI', sans-serif;
+            }}
+            AlarmsView QLabel {{
+                color: {colors['text_color']} !important;
+                background-color: transparent;
+            }}
+            AlarmsView QGroupBox {{
+                color: {colors['text_color']};
+                background-color: {colors['widget_bg']};
+                border: 2px solid {colors['border_color']};
+                border-radius: 5px;
+                margin-top: 10px;
+                font-weight: bold;
+                padding-top: 10px;
+            }}
+            AlarmsView QGroupBox::title {{
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px 0 5px;
+                background-color: {colors['widget_bg']};
+                color: {colors['text_color']};
             }}
         """
         
@@ -244,26 +265,30 @@ class AlarmsView(QWidget):
         for button in self.findChildren(QPushButton):
             button.setStyleSheet(self.theme_manager.get_button_style())
         
-        for group_box in self.findChildren(QGroupBox):
-            group_box.setStyleSheet(self.theme_manager.get_group_box_style())
+        # NIE nadpisuj stylu GroupBox - użyj globalnego z main_style
+        # for group_box in self.findChildren(QGroupBox):
+        #     group_box.setStyleSheet(self.theme_manager.get_group_box_style())
         
-        for label in self.findChildren(QLabel):
-            # W trybie jasnym etykiety muszą być czarne
-            if self.theme_manager.current_theme == 'light':
-                label_style = f"""
-                    QLabel {{
-                        color: {theme_dict['text']};
-                        background-color: transparent;
-                    }}
-                """
-            else:
-                label_style = f"""
-                    QLabel {{
-                        color: {theme_dict['text']};
-                        background-color: transparent;
-                    }}
-                """
-            label.setStyleSheet(label_style)
+        # NIE nadpisuj stylu Label - użyj globalnego z main_style
+        # for label in self.findChildren(QLabel):
+        #     label.setStyleSheet(self.theme_manager.get_label_style())
+        
+        # Zaktualizuj kolory etykiet w ustawieniach
+        if hasattr(self, 'settings_labels'):
+            label_color = colors['text_color']
+            for label in self.settings_labels:
+                label.setStyleSheet(f"color: {label_color};")
+        
+        # Zaktualizuj kolory checkboxów w ustawieniach
+        if hasattr(self, 'boost_volume_checkbox'):
+            checkbox_style = f"QCheckBox {{ color: {colors['text_color']}; }}"
+            self.boost_volume_checkbox.setStyleSheet(checkbox_style)
+        if hasattr(self, 'show_notification_checkbox'):
+            checkbox_style = f"QCheckBox {{ color: {colors['text_color']}; }}"
+            self.show_notification_checkbox.setStyleSheet(checkbox_style)
+        if hasattr(self, 'repeat_alarm_checkbox'):
+            checkbox_style = f"QCheckBox {{ color: {colors['text_color']}; }}"
+            self.repeat_alarm_checkbox.setStyleSheet(checkbox_style)
         
         for combo in self.findChildren(QComboBox):
             combo.setStyleSheet(self.theme_manager.get_combo_style())
@@ -404,8 +429,16 @@ class AlarmsView(QWidget):
         settings_group = QGroupBox("⚙️ Ustawienia")
         layout = QVBoxLayout(settings_group)
         
+        # Lista do przechowywania etykiet dla późniejszego stosowania motywu
+        self.settings_labels = []
+        
         # Dźwięki alarmów
         alarm_sound_layout = QFormLayout()
+        
+        # Etykieta dla dźwięku alarmu
+        alarm_sound_label = QLabel("Dźwięk alarmu:")
+        alarm_sound_label.setStyleSheet("color: #2c3e50;")  # Bezpośrednie ustawienie koloru
+        self.settings_labels.append(alarm_sound_label)
         
         self.alarm_sound_combo = QComboBox()
         self.alarm_sound_combo.addItems([
@@ -417,7 +450,7 @@ class AlarmsView(QWidget):
             "Własny plik..."
         ])
         self.alarm_sound_combo.currentTextChanged.connect(self.on_alarm_sound_changed)
-        alarm_sound_layout.addRow("Dźwięk alarmu:", self.alarm_sound_combo)
+        alarm_sound_layout.addRow(alarm_sound_label, self.alarm_sound_combo)
         
         # Przycisk test dźwięku alarmu
         test_alarm_sound_btn = QPushButton("🔊 Test alarmu")
@@ -435,6 +468,11 @@ class AlarmsView(QWidget):
         # Dźwięki timerów
         timer_sound_layout = QFormLayout()
         
+        # Etykieta dla dźwięku timera
+        timer_sound_label = QLabel("Dźwięk timera:")
+        timer_sound_label.setStyleSheet("color: #2c3e50;")  # Bezpośrednie ustawienie koloru
+        self.settings_labels.append(timer_sound_label)
+        
         self.timer_sound_combo = QComboBox()
         self.timer_sound_combo.addItems([
             "Systemowy beep",
@@ -445,7 +483,7 @@ class AlarmsView(QWidget):
             "Własny plik..."
         ])
         self.timer_sound_combo.currentTextChanged.connect(self.on_timer_sound_changed)
-        timer_sound_layout.addRow("Dźwięk timera:", self.timer_sound_combo)
+        timer_sound_layout.addRow(timer_sound_label, self.timer_sound_combo)
         
         # Przycisk test dźwięku timera
         test_timer_sound_btn = QPushButton("🔊 Test timera")
@@ -463,17 +501,25 @@ class AlarmsView(QWidget):
         # Głośność
         volume_layout = QFormLayout()
         
+        # Etykieta dla głośności
+        volume_main_label = QLabel("Głośność:")
+        volume_main_label.setStyleSheet("color: #2c3e50;")  # Bezpośrednie ustawienie koloru
+        self.settings_labels.append(volume_main_label)
+        
         self.volume_slider = QSlider(Qt.Orientation.Horizontal)
         self.volume_slider.setRange(0, 100)
         self.volume_slider.setValue(70)
         self.volume_slider.valueChanged.connect(self.on_volume_changed)
         
         self.volume_label = QLabel("70%")
+        self.volume_label.setStyleSheet("color: #2c3e50;")  # Bezpośrednie ustawienie koloru
+        self.settings_labels.append(self.volume_label)
+        
         volume_widget = QWidget()
         volume_widget_layout = QHBoxLayout(volume_widget)
         volume_widget_layout.addWidget(self.volume_slider)
         volume_widget_layout.addWidget(self.volume_label)
-        volume_layout.addRow("Głośność:", volume_widget)
+        volume_layout.addRow(volume_main_label, volume_widget)
         
         layout.addLayout(volume_layout)
         
@@ -487,13 +533,16 @@ class AlarmsView(QWidget):
         system_layout = QFormLayout()
         
         self.boost_volume_checkbox = QCheckBox("Podgłośnij system gdy jest wyciszony")
+        self.boost_volume_checkbox.setStyleSheet("QCheckBox { color: #2c3e50; }")
         system_layout.addRow("", self.boost_volume_checkbox)
         
         self.show_notification_checkbox = QCheckBox("Pokaż powiadomienie systemowe")
         self.show_notification_checkbox.setChecked(True)
+        self.show_notification_checkbox.setStyleSheet("QCheckBox { color: #2c3e50; }")
         system_layout.addRow("", self.show_notification_checkbox)
         
         self.repeat_alarm_checkbox = QCheckBox("Powtarzaj alarm co 5 minut")
+        self.repeat_alarm_checkbox.setStyleSheet("QCheckBox { color: #2c3e50; }")
         system_layout.addRow("", self.repeat_alarm_checkbox)
         
         layout.addLayout(system_layout)
