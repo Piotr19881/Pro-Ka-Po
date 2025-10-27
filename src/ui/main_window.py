@@ -9,11 +9,12 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QMessageBox, QTableWidget, QTableWidgetItem,
                              QStyledItemDelegate, QDateEdit, QCalendarWidget,
                              QDoubleSpinBox, QFormLayout, QListWidget, QLineEdit,
-                             QScrollArea, QInputDialog, QSizePolicy, QFileDialog)
+                             QScrollArea, QInputDialog, QSizePolicy, QFileDialog, QSystemTrayIcon, QMenu)
 from PyQt6.QtCore import Qt, QDateTime, QDate, QTimer
-from PyQt6.QtGui import QFont, QIcon, QKeyEvent, QColor, QPalette
+from PyQt6.QtGui import QFont, QIcon, QKeyEvent, QColor, QPalette, QKeySequence, QShortcut
 from .pomodoro_view import PomodoroView
 from .theme_manager import ThemeManager
+from .quick_task_dialog import QuickTaskDialog
 from src.utils.backup_manager import BackupManager
 
 class EditableTableWidget(QTableWidget):
@@ -227,6 +228,12 @@ class TaskManagerApp(QMainWindow):
         # Zastosuj początkowy motyw
         self.apply_theme_to_main_window()
         
+        # Inicjalizuj system tray
+        self.setup_system_tray()
+        
+        # Inicjalizuj globalny skrót do szybkiego dodawania zadań
+        self.setup_quick_task_shortcut()
+        
         # Dodaj testowe dane tylko jeśli nie ma żadnych tabel I żadnych list słownikowych
         user_tables = self.db.get_user_tables()
         if not user_tables:
@@ -249,6 +256,373 @@ class TaskManagerApp(QMainWindow):
         # Zastosuj style do nawigacji
         if hasattr(self, 'nav_widget'):
             self.nav_widget.setStyleSheet(self.theme_manager.get_navigation_style())
+    
+    def setup_system_tray(self):
+        """Inicjalizuje ikonę w zasobniku systemowym"""
+        # Utwórz ikonę (możesz użyć własnej ikony zamiast domyślnej)
+        self.tray_icon = QSystemTrayIcon(self)
+        
+        # Ustaw ikonę (użyj domyślnej ikony aplikacji lub własnej)
+        icon = QIcon()
+        if icon.isNull():
+            # Jeśli nie ma ikony, użyj ikony systemowej
+            icon = self.style().standardIcon(self.style().StandardPixmap.SP_ComputerIcon)
+        self.tray_icon.setIcon(icon)
+        
+        # Utwórz menu kontekstowe dla ikony
+        tray_menu = QMenu()
+        
+        # Akcja: Pokaż okno
+        show_action = tray_menu.addAction("Pokaż okno")
+        show_action.triggered.connect(self.show_and_focus_main_window)
+        
+        # Akcja: Szybkie dodawanie zadania
+        quick_task_action = tray_menu.addAction("Szybkie dodawanie zadania")
+        quick_task_action.triggered.connect(self.open_quick_task_dialog)
+        
+        tray_menu.addSeparator()
+        
+        # Akcja: Wyjście
+        quit_action = tray_menu.addAction("Zakończ")
+        quit_action.triggered.connect(self.quit_application)
+        
+        self.tray_icon.setContextMenu(tray_menu)
+        
+        # Obsługa podwójnego kliknięcia na ikonie
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
+        
+        # Pokaż ikonę w zasobniku
+        self.tray_icon.show()
+        
+        self.tray_icon.setToolTip("Pro-Ka-Po V2 - Organizator Zadań")
+    
+    def on_tray_icon_activated(self, reason):
+        """Obsługuje kliknięcie na ikonę w zasobniku"""
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.show_and_focus_main_window()
+    
+    def changeEvent(self, event):
+        """Obsługuje zdarzenia zmiany stanu okna"""
+        if event.type() == event.Type.WindowStateChange:
+            # Sprawdź czy włączony jest tryb pracy w tle
+            if hasattr(self, 'background_mode_check') and self.background_mode_check.isChecked():
+                if self.windowState() & Qt.WindowState.WindowMinimized:
+                    # Ukryj okno zamiast minimalizować
+                    event.ignore()
+                    self.hide()
+                    self.tray_icon.showMessage(
+                        "Pro-Ka-Po V2",
+                        "Aplikacja działa w tle. Kliknij dwukrotnie ikonę w zasobniku aby przywrócić okno.",
+                        QSystemTrayIcon.MessageIcon.Information,
+                        2000
+                    )
+                    return
+        super().changeEvent(event)
+    
+    def closeEvent(self, event):
+        """Obsługuje zamykanie okna"""
+        # Sprawdź czy włączony jest tryb pracy w tle
+        if hasattr(self, 'background_mode_check') and self.background_mode_check.isChecked():
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage(
+                "Pro-Ka-Po V2",
+                "Aplikacja działa w tle. Kliknij dwukrotnie ikonę w zasobniku aby przywrócić okno.",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000
+            )
+        else:
+            # Normalne zamknięcie
+            self.quit_application()
+    
+    def quit_application(self):
+        """Całkowicie zamyka aplikację"""
+        self.tray_icon.hide()
+        QApplication.quit()
+    
+    def setup_quick_task_shortcut(self):
+        """Inicjalizuje globalny skrót do szybkiego dodawania zadań"""
+        # Wczytaj zapisany skrót lub użyj domyślnego
+        shortcut_key = self.load_quick_task_shortcut()
+        
+        # Utwórz globalny skrót
+        self.quick_task_shortcut_obj = QShortcut(QKeySequence(shortcut_key), self)
+        self.quick_task_shortcut_obj.activated.connect(self.open_quick_task_dialog)
+    
+    def load_quick_task_shortcut(self):
+        """Wczytuje zapisany skrót klawiszowy z bazy danych"""
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT value 
+                FROM app_settings 
+                WHERE key = 'quick_task_shortcut'
+            """)
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result and result[0]:
+                return result[0]
+            else:
+                # Domyślny skrót
+                return "Ctrl+Shift+N"
+        except Exception as e:
+            print(f"Błąd wczytywania skrótu: {e}")
+            return "Ctrl+Shift+N"
+    
+    def save_quick_task_shortcut(self):
+        """Zapisuje nowy skrót klawiszowy do bazy danych"""
+        try:
+            # Pobierz wartość z QKeySequenceEdit
+            new_shortcut = self.quick_task_shortcut.keySequence().toString()
+            
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO app_settings (key, value)
+                VALUES ('quick_task_shortcut', ?)
+            """, (new_shortcut,))
+            conn.commit()
+            conn.close()
+            
+            # Zaktualizuj globalny skrót
+            self.quick_task_shortcut_obj.setKey(QKeySequence(new_shortcut))
+            
+            print(f"Zapisano skrót: {new_shortcut}")
+        except Exception as e:
+            print(f"Błąd zapisywania skrótu: {e}")
+    
+    def open_quick_task_dialog(self):
+        """Otwiera dialog szybkiego dodawania zadań"""
+        try:
+            # Utwórz dialog
+            dialog = QuickTaskDialog(self, self.theme_manager, self.db_manager)
+            
+            # Podłącz sygnał dodania zadania do odświeżenia widoku
+            dialog.task_added.connect(self.refresh_tasks_after_quick_add)
+            
+            # Pokaż dialog
+            dialog.exec()
+        except Exception as e:
+            print(f"Błąd otwierania dialogu szybkiego zadania: {e}")
+            QMessageBox.critical(
+                self,
+                "Błąd",
+                f"Nie udało się otworzyć okna szybkiego dodawania zadań:\n{str(e)}"
+            )
+    
+    def refresh_tasks_after_quick_add(self):
+        """Odświeża widok zadań po dodaniu zadania przez quick dialog"""
+        if hasattr(self, 'tasks_view') and self.tasks_view:
+            self.tasks_view.load_tasks()
+            print("Odświeżono listę zadań po dodaniu przez quick dialog")
+    
+    def load_main_window_shortcut(self):
+        """Wczytuje zapisany skrót wywołania głównego okna z bazy danych"""
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT value 
+                FROM app_settings 
+                WHERE key = 'main_window_shortcut'
+            """)
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result and result[0]:
+                return result[0]
+            else:
+                # Domyślny skrót
+                return "Ctrl+Shift+M"
+        except Exception as e:
+            print(f"Błąd wczytywania skrótu głównego okna: {e}")
+            return "Ctrl+Shift+M"
+    
+    def save_main_window_shortcut(self):
+        """Zapisuje nowy skrót wywołania głównego okna do bazy danych"""
+        try:
+            # Pobierz wartość z QKeySequenceEdit
+            new_shortcut = self.show_main_window_shortcut.keySequence().toString()
+            
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO app_settings (key, value)
+                VALUES ('main_window_shortcut', ?)
+            """, (new_shortcut,))
+            conn.commit()
+            conn.close()
+            
+            # Zaktualizuj globalny skrót jeśli istnieje
+            if hasattr(self, 'show_main_window_shortcut_obj'):
+                self.show_main_window_shortcut_obj.setKey(QKeySequence(new_shortcut))
+            
+            print(f"Zapisano skrót głównego okna: {new_shortcut}")
+        except Exception as e:
+            print(f"Błąd zapisywania skrótu głównego okna: {e}")
+    
+    def on_background_mode_changed(self, state):
+        """Obsługuje zmianę checkboxa pracy w tle"""
+        enabled = (state == Qt.CheckState.Checked.value)
+        
+        # Włącz/wyłącz pole skrótu głównego okna
+        self.show_main_window_shortcut.setEnabled(enabled)
+        
+        # Zapisz ustawienie
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO app_settings (key, value)
+                VALUES ('background_mode', ?)
+            """, (str(enabled),))
+            conn.commit()
+            conn.close()
+            print(f"Tryb pracy w tle: {'włączony' if enabled else 'wyłączony'}")
+        except Exception as e:
+            print(f"Błąd zapisywania trybu pracy w tle: {e}")
+        
+        # Ustaw/usuń globalny skrót wywołania głównego okna
+        if enabled:
+            self.setup_main_window_shortcut()
+        else:
+            if hasattr(self, 'show_main_window_shortcut_obj'):
+                self.show_main_window_shortcut_obj.setEnabled(False)
+    
+    def load_background_mode_setting(self):
+        """Wczytuje ustawienie pracy w tle z bazy danych"""
+        try:
+            conn = self.db.get_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT value 
+                FROM app_settings 
+                WHERE key = 'background_mode'
+            """)
+            result = cursor.fetchone()
+            conn.close()
+            
+            if result and result[0]:
+                enabled = result[0].lower() == 'true'
+                self.background_mode_check.setChecked(enabled)
+                self.show_main_window_shortcut.setEnabled(enabled)
+                
+                if enabled:
+                    self.setup_main_window_shortcut()
+        except Exception as e:
+            print(f"Błąd wczytywania trybu pracy w tle: {e}")
+    
+    def setup_main_window_shortcut(self):
+        """Inicjalizuje globalny skrót do wywołania głównego okna"""
+        shortcut_key = self.load_main_window_shortcut()
+        
+        if not hasattr(self, 'show_main_window_shortcut_obj'):
+            self.show_main_window_shortcut_obj = QShortcut(QKeySequence(shortcut_key), self)
+            self.show_main_window_shortcut_obj.activated.connect(self.show_and_focus_main_window)
+        else:
+            self.show_main_window_shortcut_obj.setKey(QKeySequence(shortcut_key))
+            self.show_main_window_shortcut_obj.setEnabled(True)
+    
+    def show_and_focus_main_window(self):
+        """Pokazuje i aktywuje główne okno aplikacji"""
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        print("Wywołano główne okno aplikacji")
+    
+    def on_autostart_changed(self, state):
+        """Obsługuje zmianę checkboxa autostartu"""
+        enabled = (state == Qt.CheckState.Checked.value)
+        
+        if enabled:
+            self.enable_autostart()
+        else:
+            self.disable_autostart()
+    
+    def enable_autostart(self):
+        """Włącza automatyczne uruchamianie z systemem (Windows)"""
+        try:
+            import winreg
+            import sys
+            import os
+            
+            # Ścieżka do klucza rejestru
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            app_name = "Pro-Ka-Po V2"
+            
+            # Ścieżka do pliku wykonywalnego
+            if getattr(sys, 'frozen', False):
+                # Jeśli aplikacja jest spakowana (exe)
+                app_path = sys.executable
+            else:
+                # Jeśli uruchamiana z Python
+                app_path = f'"{sys.executable}" "{os.path.abspath("main.py")}"'
+            
+            # Otwórz klucz rejestru
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+            winreg.SetValueEx(key, app_name, 0, winreg.REG_SZ, app_path)
+            winreg.CloseKey(key)
+            
+            print(f"Autostart włączony: {app_path}")
+            
+        except Exception as e:
+            print(f"Błąd włączania autostartu: {e}")
+            QMessageBox.warning(
+                self,
+                "Uwaga",
+                f"Nie udało się włączyć autostartu:\n{str(e)}"
+            )
+            self.autostart_check.setChecked(False)
+    
+    def disable_autostart(self):
+        """Wyłącza automatyczne uruchamianie z systemem (Windows)"""
+        try:
+            import winreg
+            
+            # Ścieżka do klucza rejestru
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            app_name = "Pro-Ka-Po V2"
+            
+            # Otwórz klucz rejestru
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_SET_VALUE)
+            
+            try:
+                winreg.DeleteValue(key, app_name)
+                print("Autostart wyłączony")
+            except FileNotFoundError:
+                # Klucz nie istnieje, nic nie rób
+                pass
+            
+            winreg.CloseKey(key)
+            
+        except Exception as e:
+            print(f"Błąd wyłączania autostartu: {e}")
+    
+    def check_autostart_status(self):
+        """Sprawdza czy autostart jest włączony"""
+        try:
+            import winreg
+            
+            # Ścieżka do klucza rejestru
+            key_path = r"Software\Microsoft\Windows\CurrentVersion\Run"
+            app_name = "Pro-Ka-Po V2"
+            
+            # Otwórz klucz rejestru
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path, 0, winreg.KEY_READ)
+            
+            try:
+                value, _ = winreg.QueryValueEx(key, app_name)
+                winreg.CloseKey(key)
+                return True
+            except FileNotFoundError:
+                winreg.CloseKey(key)
+                return False
+                
+        except Exception as e:
+            print(f"Błąd sprawdzania autostartu: {e}")
+            return False
     
     def init_ui(self):
         """Inicjalizuje interfejs użytkownika"""
@@ -1836,7 +2210,18 @@ class TaskManagerApp(QMainWindow):
     def create_general_settings_tab(self):
         """Tworzy zakładkę ustawień ogólnych"""
         tab = QWidget()
-        layout = QVBoxLayout(tab)
+        main_layout = QVBoxLayout(tab)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        
+        # Scroll Area
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        
+        # Widget wewnętrzny ze scrollem
+        scroll_content = QWidget()
+        layout = QVBoxLayout(scroll_content)
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
         
@@ -1858,7 +2243,13 @@ class TaskManagerApp(QMainWindow):
         
         # Autostart
         self.autostart_check = QCheckBox("Uruchom automatycznie z systemem")
+        self.autostart_check.stateChanged.connect(self.on_autostart_changed)
         app_layout.addWidget(self.autostart_check, 2, 0, 1, 2)
+        
+        # Praca w tle
+        self.background_mode_check = QCheckBox("Praca w tle (minimalizuj do zasobnika systemowego)")
+        self.background_mode_check.stateChanged.connect(self.on_background_mode_changed)
+        app_layout.addWidget(self.background_mode_check, 3, 0, 1, 2)
         
         layout.addWidget(app_group)
         
@@ -1874,6 +2265,43 @@ class TaskManagerApp(QMainWindow):
         notif_layout.addWidget(self.sound_check, 1, 0, 1, 2)
         
         layout.addWidget(notif_group)
+        
+        # Grupa skrótów klawiszowych
+        shortcuts_group = QGroupBox("Skróty klawiszowe")
+        shortcuts_layout = QGridLayout(shortcuts_group)
+        
+        # Skrót dla szybkiego dodawania zadań
+        shortcuts_layout.addWidget(QLabel("Szybkie dodawanie zadania:"), 0, 0)
+        
+        from PyQt6.QtWidgets import QKeySequenceEdit
+        self.quick_task_shortcut = QKeySequenceEdit()
+        # Wczytaj zapisany skrót lub użyj domyślnego
+        saved_shortcut = self.load_quick_task_shortcut()
+        self.quick_task_shortcut.setKeySequence(QKeySequence(saved_shortcut))
+        shortcuts_layout.addWidget(self.quick_task_shortcut, 0, 1)
+        
+        # Opis
+        shortcut_desc = QLabel("Ustaw skrót klawiszowy do otwarcia okna szybkiego dodawania zadań")
+        shortcut_desc.setWordWrap(True)
+        shortcut_desc.setStyleSheet("color: gray; font-size: 9pt;")
+        shortcuts_layout.addWidget(shortcut_desc, 1, 0, 1, 2)
+        
+        # Skrót dla wywołania głównego okna (tylko gdy praca w tle)
+        shortcuts_layout.addWidget(QLabel("Wywołanie głównego okna:"), 2, 0)
+        
+        self.show_main_window_shortcut = QKeySequenceEdit()
+        saved_main_shortcut = self.load_main_window_shortcut()
+        self.show_main_window_shortcut.setKeySequence(QKeySequence(saved_main_shortcut))
+        self.show_main_window_shortcut.setEnabled(False)  # Domyślnie wyłączone
+        shortcuts_layout.addWidget(self.show_main_window_shortcut, 2, 1)
+        
+        # Opis skrótu głównego okna
+        main_shortcut_desc = QLabel("Ustaw skrót do wywołania głównego okna z zasobnika systemowego (tylko gdy praca w tle)")
+        main_shortcut_desc.setWordWrap(True)
+        main_shortcut_desc.setStyleSheet("color: gray; font-size: 9pt;")
+        shortcuts_layout.addWidget(main_shortcut_desc, 3, 0, 1, 2)
+        
+        layout.addWidget(shortcuts_group)
         
         # Grupa backupu bazy danych
         backup_group = QGroupBox("Backup bazy danych")
@@ -1896,10 +2324,32 @@ class TaskManagerApp(QMainWindow):
         
         layout.addWidget(backup_group)
         
+        # Przyciski akcji
+        actions_layout = QHBoxLayout()
+        actions_layout.addStretch()
+        
+        save_settings_btn = QPushButton("💾 Zapisz ustawienia")
+        save_settings_btn.clicked.connect(self.save_settings)
+        save_settings_btn.setMinimumWidth(150)
+        actions_layout.addWidget(save_settings_btn)
+        
+        layout.addLayout(actions_layout)
+        
         layout.addStretch()
+        
+        # Ustaw scroll content
+        scroll_area.setWidget(scroll_content)
+        main_layout.addWidget(scroll_area)
         
         # Połącz sygnały
         self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
+        
+        # Wczytaj stan checkboxa pracy w tle
+        self.load_background_mode_setting()
+        
+        # Wczytaj stan autostartu
+        autostart_enabled = self.check_autostart_status()
+        self.autostart_check.setChecked(autostart_enabled)
         
         self.settings_tabs.addTab(tab, "Ogólne")
     
@@ -2851,8 +3301,29 @@ class TaskManagerApp(QMainWindow):
     
     def save_settings(self):
         """Zapisuje ustawienia aplikacji"""
-        # TODO: Implementacja zapisywania ustawień do pliku konfiguracyjnego
-        print("Ustawienia zostały zapisane!")
+        try:
+            # Zapisz skrót do szybkiego dodawania zadań
+            self.save_quick_task_shortcut()
+            
+            # Zapisz skrót do wywołania głównego okna (jeśli tryb pracy w tle jest włączony)
+            if self.background_mode_check.isChecked():
+                self.save_main_window_shortcut()
+            
+            # TODO: Implementacja zapisywania innych ustawień do pliku konfiguracyjnego
+            
+            QMessageBox.information(
+                self,
+                "Sukces",
+                "Ustawienia zostały zapisane!"
+            )
+            print("Ustawienia zostały zapisane!")
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Błąd",
+                f"Nie udało się zapisać ustawień:\n{str(e)}"
+            )
+            print(f"Błąd zapisywania ustawień: {e}")
     
     def reset_settings(self):
         """Przywraca domyślne ustawienia"""

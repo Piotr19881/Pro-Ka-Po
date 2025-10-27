@@ -912,11 +912,15 @@ class TasksView(QWidget):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
+            # Usuń z bazy danych
+            self.db_manager.delete_task(task_id)
+            
+            # Usuń z lokalnej listy
             self.current_tasks = [task for task in self.current_tasks if task['id'] != task_id]
             self.populate_table()
             self.load_existing_tags()
             self.task_deleted.emit(task_id)
-            print(f"Usunięto zadanie {task_id}")
+            print(f"Usunięto zadanie {task_id} z bazy danych")
             
     def show_column_config(self):
         """Pokazuje dialog konfiguracji kolumn"""
