@@ -1,6 +1,10 @@
 PyQt6>=6.6.0
-PyQt6-tools>=6.6.0
+# Uwaga: Nie instalujemy PyQt6-tools - są potrzebne tylko do developmentu
+# Nie instalujemy PyQt6-WebEngine - nie jest używany w projekcie (-50 MB)
 
 # SQLite support (built-in with Python)
 # Additional packages for date/time handling
 python-dateutil>=2.8.0
+
+# Global hotkeys support
+keyboard>=0.13.5

@@ -1,6 +1,7 @@
 import sys
 import os
 import datetime
+import keyboard  # Do globalnych skrótów klawiszowych
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QTextEdit, QComboBox, 
                              QDateTimeEdit, QLabel, QFrame, QSplitter, QStackedWidget,
@@ -337,17 +338,39 @@ class TaskManagerApp(QMainWindow):
     
     def quit_application(self):
         """Całkowicie zamyka aplikację"""
+        # Usuń wszystkie globalne skróty klawiszowe
+        try:
+            keyboard.unhook_all_hotkeys()
+            print("Usunięto wszystkie globalne skróty klawiszowe")
+        except Exception as e:
+            print(f"Błąd podczas usuwania globalnych skrótów: {e}")
+        
         self.tray_icon.hide()
         QApplication.quit()
     
     def setup_quick_task_shortcut(self):
         """Inicjalizuje globalny skrót do szybkiego dodawania zadań"""
-        # Wczytaj zapisany skrót lub użyj domyślnego
-        shortcut_key = self.load_quick_task_shortcut()
-        
-        # Utwórz globalny skrót
-        self.quick_task_shortcut_obj = QShortcut(QKeySequence(shortcut_key), self)
-        self.quick_task_shortcut_obj.activated.connect(self.open_quick_task_dialog)
+        try:
+            # Wczytaj zapisany skrót lub użyj domyślnego
+            shortcut_key = self.load_quick_task_shortcut()
+            
+            # Konwertuj skrót z formatu Qt na format biblioteki keyboard
+            # Ctrl+Shift+N -> ctrl+shift+n
+            hotkey = shortcut_key.lower().replace('+', '+')
+            
+            # Zarejestruj globalny skrót klawiszowy z lambda do wywołania slotu Qt
+            def quick_task_callback():
+                # Użyj QTimer aby wywołać metodę w głównym wątku Qt
+                QTimer.singleShot(0, self.open_quick_task_dialog)
+            
+            keyboard.add_hotkey(hotkey, quick_task_callback, suppress=True)
+            
+            print(f"Zarejestrowano globalny skrót szybkiego zadania: {shortcut_key}")
+        except Exception as e:
+            print(f"Błąd podczas rejestracji globalnego skrótu szybkiego zadania: {e}")
+            # Fallback do lokalnego skrótu
+            self.quick_task_shortcut_obj = QShortcut(QKeySequence(shortcut_key), self)
+            self.quick_task_shortcut_obj.activated.connect(self.open_quick_task_dialog)
     
     def load_quick_task_shortcut(self):
         """Wczytuje zapisany skrót klawiszowy z bazy danych"""
@@ -516,14 +539,39 @@ class TaskManagerApp(QMainWindow):
     
     def setup_main_window_shortcut(self):
         """Inicjalizuje globalny skrót do wywołania głównego okna"""
-        shortcut_key = self.load_main_window_shortcut()
-        
-        if not hasattr(self, 'show_main_window_shortcut_obj'):
-            self.show_main_window_shortcut_obj = QShortcut(QKeySequence(shortcut_key), self)
-            self.show_main_window_shortcut_obj.activated.connect(self.show_and_focus_main_window)
-        else:
-            self.show_main_window_shortcut_obj.setKey(QKeySequence(shortcut_key))
-            self.show_main_window_shortcut_obj.setEnabled(True)
+        try:
+            # Usuń poprzedni globalny skrót jeśli istnieje
+            if hasattr(self, 'global_hotkey_registered') and self.global_hotkey_registered:
+                try:
+                    keyboard.unhook_all_hotkeys()
+                    self.global_hotkey_registered = False
+                except:
+                    pass
+            
+            shortcut_key = self.load_main_window_shortcut()
+            
+            # Konwertuj skrót z formatu Qt na format biblioteki keyboard
+            # Ctrl+Shift+M -> ctrl+shift+m
+            hotkey = shortcut_key.lower().replace('+', '+')
+            
+            # Zarejestruj globalny skrót klawiszowy z lambda do wywołania slotu Qt
+            def main_window_callback():
+                # Użyj QTimer aby wywołać metodę w głównym wątku Qt
+                QTimer.singleShot(0, self.show_and_focus_main_window)
+            
+            keyboard.add_hotkey(hotkey, main_window_callback, suppress=True)
+            self.global_hotkey_registered = True
+            
+            print(f"Zarejestrowano globalny skrót: {shortcut_key}")
+        except Exception as e:
+            print(f"Błąd podczas rejestracji globalnego skrótu: {e}")
+            # Fallback do lokalnego skrótu
+            if not hasattr(self, 'show_main_window_shortcut_obj'):
+                self.show_main_window_shortcut_obj = QShortcut(QKeySequence(shortcut_key), self)
+                self.show_main_window_shortcut_obj.activated.connect(self.show_and_focus_main_window)
+            else:
+                self.show_main_window_shortcut_obj.setKey(QKeySequence(shortcut_key))
+                self.show_main_window_shortcut_obj.setEnabled(True)
     
     def show_and_focus_main_window(self):
         """Pokazuje i aktywuje główne okno aplikacji"""

@@ -1,0 +1,54 @@
+# Lista modułów do wykluczenia podczas budowania z PyInstaller
+# Użycie: pyinstaller --exclude-module=MODULE_NAME
+
+# PyQt6 modules - nieużywane w projekcie
+PyQt6.QtWebEngine
+PyQt6.QtWebEngineCore
+PyQt6.QtWebEngineWidgets
+PyQt6.Qt3DAnimation
+PyQt6.Qt3DCore
+PyQt6.Qt3DExtras
+PyQt6.Qt3DInput
+PyQt6.Qt3DLogic
+PyQt6.Qt3DRender
+PyQt6.QtBluetooth
+PyQt6.QtNfc
+PyQt6.QtPositioning
+PyQt6.QtSensors
+PyQt6.QtSerialPort
+PyQt6.QtSql
+PyQt6.QtTest
+PyQt6.QtXml
+PyQt6.QtNetworkAuth
+PyQt6.QtWebSockets
+PyQt6.QtCharts
+PyQt6.QtDataVisualization
+PyQt6.QtQuick
+PyQt6.QtQuick3D
+PyQt6.QtQuickControls2
+PyQt6.QtQuickWidgets
+PyQt6.QtRemoteObjects
+PyQt6.QtScxml
+PyQt6.QtStateMachine
+PyQt6.QtSvg
+PyQt6.QtSvgWidgets
+PyQt6.QtVirtualKeyboard
+PyQt6.QtWebChannel
+
+# Python stdlib - nieużywane moduły
+tkinter
+test
+unittest
+pydoc_data
+doctest
+xmlrpc
+xml.dom
+xml.sax
+lib2to3
+
+# Inne nieużywane
+PIL
+numpy
+pandas
+matplotlib
+scipy
