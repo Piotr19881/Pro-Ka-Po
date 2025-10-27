@@ -70,6 +70,18 @@ class PomodoroView(QWidget):
             """
             self.session_counter_label.setStyleSheet(counter_style)
         
+        # Status label
+        if hasattr(self, 'status_label'):
+            # W trybie jasnym użyj czarnego koloru, w ciemnym zielonego
+            status_color = theme_dict['accent'] if self.theme_manager.current_theme == 'dark' else '#000000'
+            status_style = f"""
+                QLabel {{
+                    color: {status_color};
+                    background-color: transparent;
+                }}
+            """
+            self.status_label.setStyleSheet(status_style)
+        
         # Time label (główny wyświetlacz czasu)
         if hasattr(self, 'time_label'):
             time_color = theme_dict['accent'] if self.theme_manager.current_theme == 'dark' else '#e74c3c'
@@ -228,15 +240,15 @@ class PomodoroView(QWidget):
         # Wszystkie QLabel (oprócz głównych elementów timera)
         for label in self.findChildren(QLabel):
             if label not in [getattr(self, 'time_label', None), getattr(self, 'session_label', None), getattr(self, 'session_counter_label', None), getattr(self, 'status_label', None)]:
-                # Dla opisów pól użyj koloru czerwonego w trybie ciemnym
+                # Dla opisów pól użyj koloru w zależności od motywu
                 if self.theme_manager.current_theme == 'dark':
-                    label_color = theme_dict.get('accent', '#ff6b6b')  # Czerwony w trybie ciemnym
+                    label_color = theme_dict.get('accent', '#00ff41')  # Zielony Matrix w trybie ciemnym
                 else:
-                    label_color = theme_dict['text']  # Czarny w trybie jasnym
+                    label_color = '#000000'  # Czarny w trybie jasnym
                 
                 label_style = f"""
                     QLabel {{
-                        color: {label_color};
+                        color: {label_color} !important;
                         background-color: transparent;
                     }}
                 """
@@ -533,19 +545,21 @@ class PomodoroView(QWidget):
                 subcontrol-origin: margin;
                 left: 10px;
                 padding: 0 5px 0 5px;
-                color: #2c3e50;
+                color: #000000;
             }
         """)
         stats_layout = QVBoxLayout(stats_group)
         
         self.completed_sessions_label = QLabel("Ukończone sesje: 0")
         self.completed_sessions_label.setFont(QFont("Segoe UI", 11))
-        self.completed_sessions_label.setStyleSheet(self.theme_manager.get_label_style())
+        if self.theme_manager:
+            self.completed_sessions_label.setStyleSheet(self.theme_manager.get_label_style())
         stats_layout.addWidget(self.completed_sessions_label)
         
         self.total_focus_time_label = QLabel("Całkowity czas skupienia: 0 min")
         self.total_focus_time_label.setFont(QFont("Segoe UI", 11))
-        self.total_focus_time_label.setStyleSheet(self.theme_manager.get_label_style())
+        if self.theme_manager:
+            self.total_focus_time_label.setStyleSheet(self.theme_manager.get_label_style())
         stats_layout.addWidget(self.total_focus_time_label)
         
         layout.addWidget(stats_group)
