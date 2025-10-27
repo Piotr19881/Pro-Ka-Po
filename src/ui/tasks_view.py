@@ -742,8 +742,8 @@ class TasksView(QWidget):
             filtered = [task for task in filtered if search_text in task['task'].lower()]
         
         # Automatyczne przenoszenie ukończonych pod nieukończone
-        auto_move = self.db_manager.get_setting('task_auto_move_completed', 'false')
-        if auto_move == 'true':
+        auto_move = self.db_manager.get_setting('task_auto_move_completed', '0')
+        if auto_move == '1':
             # Sortuj: nieukończone (False) na górze, ukończone (True) na dole
             filtered.sort(key=lambda t: (t['status'], t['id']))
             
