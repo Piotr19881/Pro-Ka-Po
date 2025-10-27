@@ -1062,6 +1062,256 @@ class Database:
         except Exception as e:
             print(f"Błąd podczas odczytu ustawienia {key}: {e}")
             return default
+    
+    # === ZARZĄDZANIE DANYMI W TABELACH UŻYTKOWNIKA ===
+    
+    def get_physical_table_name(self, table_name):
+        """Zwraca bezpieczną nazwę fizycznej tabeli"""
+        return f"user_table_{table_name.lower().replace(' ', '_')}"
+    
+    def get_safe_column_name(self, column_name):
+        """Zwraca bezpieczną nazwę kolumny"""
+        safe_name = column_name.lower().replace(' ', '_').replace('-', '_')
+        return ''.join(c for c in safe_name if c.isalnum() or c == '_')
+    
+    def insert_table_row(self, table_id, row_data):
+        """Wstawia nowy wiersz do tabeli użytkownika
+        
+        Args:
+            table_id: ID tabeli w user_tables
+            row_data: Dict {column_name: value}
+        
+        Returns:
+            ID nowo utworzonego wiersza lub None w przypadku błędu
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Pobierz nazwę tabeli
+                cursor.execute('SELECT name FROM user_tables WHERE id = ?', (table_id,))
+                result = cursor.fetchone()
+                if not result:
+                    print(f"ERROR: Nie znaleziono tabeli o ID {table_id}")
+                    return None
+                
+                table_name = result[0]
+                physical_table = self.get_physical_table_name(table_name)
+                
+                # Pobierz konfigurację kolumn
+                cursor.execute('''
+                    SELECT name FROM user_table_columns 
+                    WHERE table_id = ? 
+                    ORDER BY column_order
+                ''', (table_id,))
+                columns = [self.get_safe_column_name(row[0]) for row in cursor.fetchall()]
+                
+                if not columns:
+                    print(f"ERROR: Brak kolumn dla tabeli {table_name}")
+                    return None
+                
+                # Przygotuj dane do wstawienia
+                insert_columns = []
+                insert_values = []
+                placeholders = []
+                
+                for col_name, col_value in row_data.items():
+                    safe_col = self.get_safe_column_name(col_name)
+                    if safe_col in columns:
+                        insert_columns.append(safe_col)
+                        insert_values.append(col_value)
+                        placeholders.append('?')
+                
+                if not insert_columns:
+                    print(f"ERROR: Brak prawidłowych kolumn do wstawienia")
+                    return None
+                
+                # Wykonaj INSERT
+                sql = f'''
+                    INSERT INTO {physical_table} 
+                    ({', '.join(insert_columns)}) 
+                    VALUES ({', '.join(placeholders)})
+                '''
+                
+                cursor.execute(sql, insert_values)
+                conn.commit()
+                
+                row_id = cursor.lastrowid
+                print(f"DEBUG: Dodano wiersz o ID {row_id} do tabeli {table_name}")
+                return row_id
+                
+        except Exception as e:
+            print(f"ERROR podczas wstawiania wiersza: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
+    def update_table_row(self, table_id, row_id, row_data):
+        """Aktualizuje wiersz w tabeli użytkownika
+        
+        Args:
+            table_id: ID tabeli w user_tables
+            row_id: ID wiersza do zaktualizowania
+            row_data: Dict {column_name: value}
+        
+        Returns:
+            True jeśli sukces, False w przeciwnym razie
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Pobierz nazwę tabeli
+                cursor.execute('SELECT name FROM user_tables WHERE id = ?', (table_id,))
+                result = cursor.fetchone()
+                if not result:
+                    print(f"ERROR: Nie znaleziono tabeli o ID {table_id}")
+                    return False
+                
+                table_name = result[0]
+                physical_table = self.get_physical_table_name(table_name)
+                
+                # Pobierz konfigurację kolumn
+                cursor.execute('''
+                    SELECT name FROM user_table_columns 
+                    WHERE table_id = ? 
+                    ORDER BY column_order
+                ''', (table_id,))
+                columns = [self.get_safe_column_name(row[0]) for row in cursor.fetchall()]
+                
+                # Przygotuj dane do aktualizacji
+                update_parts = []
+                update_values = []
+                
+                for col_name, col_value in row_data.items():
+                    safe_col = self.get_safe_column_name(col_name)
+                    if safe_col in columns:
+                        update_parts.append(f"{safe_col} = ?")
+                        update_values.append(col_value)
+                
+                if not update_parts:
+                    print(f"ERROR: Brak prawidłowych kolumn do aktualizacji")
+                    return False
+                
+                # Dodaj updated_at
+                update_parts.append("updated_at = CURRENT_TIMESTAMP")
+                
+                # Dodaj row_id na końcu dla WHERE
+                update_values.append(row_id)
+                
+                # Wykonaj UPDATE
+                sql = f'''
+                    UPDATE {physical_table} 
+                    SET {', '.join(update_parts)}
+                    WHERE id = ?
+                '''
+                
+                cursor.execute(sql, update_values)
+                conn.commit()
+                
+                print(f"DEBUG: Zaktualizowano wiersz ID {row_id} w tabeli {table_name}")
+                return True
+                
+        except Exception as e:
+            print(f"ERROR podczas aktualizacji wiersza: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def get_table_rows(self, table_id):
+        """Pobiera wszystkie wiersze z tabeli użytkownika
+        
+        Args:
+            table_id: ID tabeli w user_tables
+        
+        Returns:
+            Lista dict {column_name: value} lub [] w przypadku błędu
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Pobierz nazwę tabeli
+                cursor.execute('SELECT name FROM user_tables WHERE id = ?', (table_id,))
+                result = cursor.fetchone()
+                if not result:
+                    print(f"ERROR: Nie znaleziono tabeli o ID {table_id}")
+                    return []
+                
+                table_name = result[0]
+                physical_table = self.get_physical_table_name(table_name)
+                
+                # Pobierz konfigurację kolumn (oryginalne nazwy)
+                cursor.execute('''
+                    SELECT name FROM user_table_columns 
+                    WHERE table_id = ? 
+                    ORDER BY column_order
+                ''', (table_id,))
+                original_columns = [row[0] for row in cursor.fetchall()]
+                
+                # Pobierz dane
+                cursor.execute(f'SELECT * FROM {physical_table} ORDER BY id')
+                rows = cursor.fetchall()
+                
+                # Pobierz nazwy kolumn z PRAGMA
+                cursor.execute(f'PRAGMA table_info({physical_table})')
+                db_columns = [row[1] for row in cursor.fetchall()]
+                
+                # Konwertuj wyniki na dict z oryginalnymi nazwami
+                result_rows = []
+                for row in rows:
+                    row_dict = {'_row_id': row[0]}  # ID wiersza
+                    
+                    # Mapuj bezpieczne nazwy kolumn na oryginalne
+                    for orig_name in original_columns:
+                        safe_name = self.get_safe_column_name(orig_name)
+                        if safe_name in db_columns:
+                            col_index = db_columns.index(safe_name)
+                            row_dict[orig_name] = row[col_index]
+                    
+                    result_rows.append(row_dict)
+                
+                return result_rows
+                
+        except Exception as e:
+            print(f"ERROR podczas pobierania wierszy: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
+    def delete_table_row(self, table_id, row_id):
+        """Usuwa wiersz z tabeli użytkownika
+        
+        Args:
+            table_id: ID tabeli w user_tables
+            row_id: ID wiersza do usunięcia
+        
+        Returns:
+            True jeśli sukces, False w przeciwnym razie
+        """
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Pobierz nazwę tabeli
+                cursor.execute('SELECT name FROM user_tables WHERE id = ?', (table_id,))
+                result = cursor.fetchone()
+                if not result:
+                    return False
+                
+                table_name = result[0]
+                physical_table = self.get_physical_table_name(table_name)
+                
+                # Usuń wiersz
+                cursor.execute(f'DELETE FROM {physical_table} WHERE id = ?', (row_id,))
+                conn.commit()
+                
+                print(f"DEBUG: Usunięto wiersz ID {row_id} z tabeli {table_name}")
+                return True
+                
+        except Exception as e:
+            print(f"ERROR podczas usuwania wiersza: {e}")
+            return False
 
 # Test bazy danych
 if __name__ == "__main__":

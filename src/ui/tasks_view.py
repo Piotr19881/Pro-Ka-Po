@@ -924,35 +924,51 @@ class TasksView(QWidget):
         print("Konfiguracja kolumn - TODO")# TEST
     
     def update_tags_from_settings(self):
-        """Aktualizuje listę tagów i ich kolory na podstawie danych z bazy"""
+        """Aktualizuje listę tagów z listy słownikowej 'Tagi zadań'"""
         try:
             tag_entries = []
 
-            # Spróbuj pobrać tagi z tabeli task_tags (nazwa + kolor)
+            # Pobierz tagi z listy słownikowej
             try:
-                tag_rows = self.db_manager.get_task_tags()
-                for tag_row in tag_rows:
-                    tag_id, tag_name, tag_color = tag_row[:3]
-                    if tag_name:
-                        tag_entries.append({
-                            "id": tag_id,
-                            "name": tag_name,
-                            "color": tag_color or "#3498db"
-                        })
+                conn = self.db_manager.get_connection()
+                cursor = conn.cursor()
+                
+                # Pobierz ID listy słownikowej dla kolumny TAG
+                cursor.execute("SELECT dictionary_list_id FROM task_columns WHERE name='TAG'")
+                result = cursor.fetchone()
+                
+                if result and result[0]:
+                    tag_list_id = result[0]
+                    
+                    # Pobierz tagi z listy słownikowej
+                    cursor.execute("""
+                        SELECT id, value FROM dictionary_list_items 
+                        WHERE list_id = ? 
+                        ORDER BY order_index
+                    """, (tag_list_id,))
+                    
+                    tags = cursor.fetchall()
+                    
+                    # Kolory domyślne (bo lista słownikowa nie ma kolorów)
+                    default_colors = ['#e74c3c', '#f39c12', '#3498db', '#2ecc71', '#9b59b6', '#1abc9c', '#34495e']
+                    
+                    for i, (tag_id, tag_name) in enumerate(tags):
+                        if tag_name:
+                            tag_entries.append({
+                                "id": tag_id,
+                                "name": tag_name,
+                                "color": default_colors[i % len(default_colors)]
+                            })
+                    
+                    print(f"DEBUG: Załadowano {len(tag_entries)} tagów z listy słownikowej ID={tag_list_id}")
+                else:
+                    print("UWAGA: Kolumna TAG nie ma przypisanej listy słownikowej")
+                
+                conn.close()
             except Exception as fetch_exc:
-                print(f"Błąd pobierania tagów z task_tags: {fetch_exc}")
-
-            # Jeśli brak tagów, użyj kategorii jako fallbacku
-            if not tag_entries:
-                categories = self.db_manager.get_categories()
-                for category in categories:
-                    category_id, category_name, category_color = category[:3]
-                    if category_name:
-                        tag_entries.append({
-                            "id": category_id,
-                            "name": category_name,
-                            "color": category_color or "#3498db"
-                        })
+                print(f"Błąd pobierania tagów z listy słownikowej: {fetch_exc}")
+                import traceback
+                traceback.print_exc()
 
             # Zapisz mapę kolorów tagów do dalszego wykorzystania
             self.tag_color_map = {entry["name"]: entry["color"] for entry in tag_entries}

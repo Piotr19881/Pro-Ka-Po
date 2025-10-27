@@ -1022,6 +1022,14 @@ class TaskManagerApp(QMainWindow):
     
     def create_checkbox_cell(self, table, row, col, checked):
         """Tworzy komórkę z CheckBox'em"""
+        # Walidacja typu - konwersja na bool
+        if isinstance(checked, str):
+            checked = checked.lower() in ('true', '1', 'yes', 'tak')
+        elif checked is None:
+            checked = False
+        else:
+            checked = bool(checked)
+        
         # Utwórz widget z checkboxem
         checkbox_widget = QWidget()
         checkbox_layout = QHBoxLayout(checkbox_widget)
@@ -1090,6 +1098,17 @@ class TaskManagerApp(QMainWindow):
                 else:
                     self.current_table_id = None
                     print(f"DEBUG: Nie znaleziono ID dla tabeli: {table_name}")
+                    
+                    # Komunikat dla użytkownika
+                    from PyQt6.QtWidgets import QMessageBox
+                    QMessageBox.warning(
+                        self,
+                        "Błąd ładowania tabeli",
+                        f"Tabela '{table_name}' nie została znaleziona w bazie danych.\n"
+                        "Może została usunięta. Odśwież listę tabel."
+                    )
+                    self.load_user_tables()
+                    return
                 
                 # Załaduj konfigurację kolumn
                 columns_config = self.load_table_columns_config(table_name)
@@ -1107,6 +1126,14 @@ class TaskManagerApp(QMainWindow):
                 print(f"DEBUG: Błąd podczas ładowania tabeli: {e}")
                 import traceback
                 traceback.print_exc()
+                
+                # Komunikat dla użytkownika
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.critical(
+                    self,
+                    "Błąd",
+                    f"Wystąpił błąd podczas ładowania tabeli:\n{str(e)}"
+                )
                 self.clear_table()
         else:
             # Zapisz szerokości kolumn przed czyszczeniem
@@ -1134,6 +1161,12 @@ class TaskManagerApp(QMainWindow):
         # Zapisz konfigurację kolumn dla późniejszego użycia
         self.current_columns_config = columns_config
         
+        # Ukryj kolumny które mają visible=False
+        for col_index, col_config in enumerate(columns_config):
+            is_visible = col_config.get('visible', True)
+            self.main_data_table.setColumnHidden(col_index, not is_visible)
+            print(f"DEBUG: Kolumna {col_index} ({col_config['name']}): visible={is_visible}")
+        
         # Wyczyść obecne dane
         self.main_data_table.setRowCount(1)  # Jeden pusty wiersz na start
         
@@ -1148,6 +1181,9 @@ class TaskManagerApp(QMainWindow):
         
         # Skonfiguruj śledzenie zmian szerokości kolumn
         self.setup_column_width_tracking()
+        
+        # Załaduj dane z bazy
+        self.load_table_data_from_db()
         
         # Dodaj pusty wiersz do edycji
         self.add_empty_row()
@@ -1324,7 +1360,7 @@ class TaskManagerApp(QMainWindow):
             return ["Błąd ładowania"]
     
     def add_empty_row(self):
-        """Dodaje pusty wiersz do edycji"""
+        """Dodaje pusty wiersz do edycji z wartościami domyślnymi"""
         if not hasattr(self, 'current_columns_config') or not self.current_columns_config:
             return
             
@@ -1337,13 +1373,157 @@ class TaskManagerApp(QMainWindow):
         
         for col_index, col_config in enumerate(self.current_columns_config):
             col_type = col_config.get('type', 'Tekstowa')
+            default_value = col_config.get('default_value', '')
+            is_editable = col_config.get('editable', True)
             
             if col_type == 'CheckBox':
-                self.create_checkbox_cell(self.main_data_table, row, col_index, False)
+                # CheckBox z wartością domyślną
+                default_checked = default_value.lower() in ('true', '1', 'yes', 'tak') if isinstance(default_value, str) else bool(default_value)
+                self.create_checkbox_cell(self.main_data_table, row, col_index, default_checked)
             else:
-                item = QTableWidgetItem("")
+                # Zwykła komórka z wartością domyślną
+                item = QTableWidgetItem(str(default_value) if default_value else "")
                 item.setBackground(base_color)
+                
+                # Ustaw edytowalność
+                if not is_editable:
+                    item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                
                 self.main_data_table.setItem(row, col_index, item)
+    
+    def save_table_row(self, row):
+        """Zapisuje wiersz do bazy danych"""
+        if not hasattr(self, 'current_table_id') or not self.current_table_id:
+            print("DEBUG: Brak current_table_id, pomijam zapis")
+            return
+        
+        if not hasattr(self, 'current_columns_config') or not self.current_columns_config:
+            print("DEBUG: Brak current_columns_config, pomijam zapis")
+            return
+        
+        try:
+            # Zbierz dane z wiersza
+            row_data = {}
+            
+            for col_index, col_config in enumerate(self.current_columns_config):
+                col_name = col_config['name']
+                col_type = col_config.get('type', 'Tekstowa')
+                
+                # Pobierz wartość z komórki
+                if col_type == 'CheckBox':
+                    # Dla CheckBox pobierz stan
+                    widget = self.main_data_table.cellWidget(row, col_index)
+                    if widget:
+                        checkbox = widget.findChild(QCheckBox)
+                        if checkbox:
+                            row_data[col_name] = 1 if checkbox.isChecked() else 0
+                        else:
+                            row_data[col_name] = 0
+                    else:
+                        row_data[col_name] = 0
+                else:
+                    # Dla innych typów pobierz tekst
+                    item = self.main_data_table.item(row, col_index)
+                    if item:
+                        value = item.text()
+                        # Konwersja wartości pustych na None
+                        row_data[col_name] = value if value else None
+                    else:
+                        row_data[col_name] = None
+            
+            # Sprawdź czy wiersz ma już ID (czy istnieje w bazie)
+            if hasattr(self, 'table_row_ids') and row in self.table_row_ids:
+                # Aktualizuj istniejący wiersz
+                row_id = self.table_row_ids[row]
+                success = self.db_manager.update_table_row(self.current_table_id, row_id, row_data)
+                if success:
+                    print(f"DEBUG: Zaktualizowano wiersz {row} (ID {row_id})")
+                else:
+                    print(f"ERROR: Nie udało się zaktualizować wiersza {row}")
+            else:
+                # Wstaw nowy wiersz
+                row_id = self.db_manager.insert_table_row(self.current_table_id, row_data)
+                if row_id:
+                    # Zapisz ID wiersza
+                    if not hasattr(self, 'table_row_ids'):
+                        self.table_row_ids = {}
+                    self.table_row_ids[row] = row_id
+                    print(f"DEBUG: Dodano nowy wiersz {row} (ID {row_id})")
+                else:
+                    print(f"ERROR: Nie udało się dodać wiersza {row}")
+                    
+        except Exception as e:
+            print(f"ERROR podczas zapisywania wiersza {row}: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def load_table_data_from_db(self):
+        """Ładuje dane z bazy danych do tabeli"""
+        if not hasattr(self, 'current_table_id') or not self.current_table_id:
+            print("DEBUG: Brak current_table_id, pomijam ładowanie danych")
+            return
+        
+        if not hasattr(self, 'current_columns_config') or not self.current_columns_config:
+            print("DEBUG: Brak current_columns_config, pomijam ładowanie danych")
+            return
+        
+        try:
+            # Pobierz dane z bazy
+            rows = self.db_manager.get_table_rows(self.current_table_id)
+            print(f"DEBUG: Załadowano {len(rows)} wierszy z bazy danych")
+            
+            # Wyczyść mapowanie ID wierszy
+            self.table_row_ids = {}
+            
+            # Wyłącz tymczasowo sygnał itemChanged żeby uniknąć wielokrotnego zapisu
+            self.main_data_table.itemChanged.disconnect(self.on_table_item_changed)
+            
+            # Ustaw liczbę wierszy (dane + 1 pusty wiersz)
+            self.main_data_table.setRowCount(len(rows))
+            
+            # Wypełnij wiersze danymi
+            base_color, alternate_color, warning_color, text_color = self._get_table_theme_colors()
+            
+            for row_index, row_data in enumerate(rows):
+                # Zapisz ID wiersza
+                if '_row_id' in row_data:
+                    self.table_row_ids[row_index] = row_data['_row_id']
+                
+                # Wypełnij komórki
+                for col_index, col_config in enumerate(self.current_columns_config):
+                    col_name = col_config['name']
+                    col_type = col_config.get('type', 'Tekstowa')
+                    value = row_data.get(col_name, '')
+                    
+                    if col_type == 'CheckBox':
+                        # Utwórz CheckBox
+                        is_checked = bool(value) if value else False
+                        self.create_checkbox_cell(self.main_data_table, row_index, col_index, is_checked)
+                    else:
+                        # Zwykła komórka
+                        item = QTableWidgetItem(str(value) if value is not None else "")
+                        
+                        # Ustaw edytowalność
+                        if not col_config.get('editable', True):
+                            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                        
+                        self.main_data_table.setItem(row_index, col_index, item)
+            
+            # Przywróć sygnał itemChanged
+            self.main_data_table.itemChanged.connect(self.on_table_item_changed)
+            
+            print(f"DEBUG: Załadowano dane do tabeli")
+            
+        except Exception as e:
+            print(f"ERROR podczas ładowania danych z bazy: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # Przywróć sygnał w przypadku błędu
+            try:
+                self.main_data_table.itemChanged.connect(self.on_table_item_changed)
+            except:
+                pass
     
     def load_fallback_table_data(self, table_name):
         """Ładuje przykładowe dane gdy nie ma konfiguracji z bazy"""
@@ -1497,6 +1677,9 @@ class TaskManagerApp(QMainWindow):
     
     def on_table_item_changed(self, item):
         """Obsługuje zmianę zawartości komórki"""
+        if not hasattr(self, 'current_table_id') or not self.current_table_id:
+            return
+        
         row = item.row()
         col = item.column()
         
@@ -1505,34 +1688,57 @@ class TaskManagerApp(QMainWindow):
             # Sprawdź czy wiersz został wypełniony
             if self.is_row_filled(row):
                 print(f"Dodano nowy rekord w wierszu {row + 1}")
+                
+                # Zapisz nowy wiersz do bazy danych
+                self.save_table_row(row)
+                
                 # Dodaj kolejny pusty wiersz
                 self.add_empty_row()
+        else:
+            # Istniejący wiersz - zaktualizuj w bazie danych
+            self.save_table_row(row)
     
     def is_row_filled(self, row):
-        """Sprawdza czy wiersz jest wypełniony (przynajmniej nazwa)"""
-        name_item = self.main_data_table.item(row, 1)  # Kolumna "Nazwa"
-        return name_item and name_item.text().strip() != ""
+        """Sprawdza czy wiersz jest wypełniony - sprawdza pierwszą edytowalną kolumnę"""
+        if not hasattr(self, 'current_columns_config') or not self.current_columns_config:
+            return False
         
-        # Usuń podświetlenie z poprzedniego wiersza
-        prev_row = new_row - 1
-        for col in range(1, self.main_data_table.columnCount()):
-            if col != 4:  # Pomijamy CheckBox
-                prev_item = self.main_data_table.item(prev_row, col)
-                if prev_item:
-                    prev_item.setBackground(self._get_table_theme_colors()[0])
+        # Znajdź pierwszą edytowalną kolumnę tekstową
+        for col_index, col_config in enumerate(self.current_columns_config):
+            if col_config.get('editable', True) and col_config.get('type', 'Tekstowa') == 'Tekstowa':
+                item = self.main_data_table.item(row, col_index)
+                if item and item.text().strip() != "":
+                    return True
+        
+        return False
     
     def on_data_checkbox_changed(self, row, state):
         """Obsługuje zmianę stanu CheckBox'a w tabeli danych"""
         is_checked = state == 2  # Qt.CheckState.Checked
         
         # Bezpieczne pobranie nazwy z tabeli
-        name_item = self.main_data_table.item(row, 1)
-        item_name = name_item.text() if name_item else f"Rekord {row + 1}"
+        if hasattr(self, 'current_columns_config') and self.current_columns_config:
+            # Znajdź pierwszą kolumnę tekstową
+            item_name = None
+            for col_index, col_config in enumerate(self.current_columns_config):
+                if col_config.get('type') == 'Tekstowa':
+                    name_item = self.main_data_table.item(row, col_index)
+                    if name_item and name_item.text():
+                        item_name = name_item.text()
+                        break
+            
+            if not item_name:
+                item_name = f"Rekord {row + 1}"
+        else:
+            item_name = f"Rekord {row + 1}"
         
         status_text = "zakończony" if is_checked else "niezakończony"
         print(f"'{item_name}' został oznaczony jako {status_text}")
         
-        # TODO: Zapisz zmianę w bazie danych
+        # Zapisz zmianę w bazie danych (jeśli to nie jest nowy wiersz)
+        if hasattr(self, 'current_table_id') and self.current_table_id:
+            if row < self.main_data_table.rowCount() - 1:  # Nie ostatni wiersz
+                self.save_table_row(row)
     
     def create_pomodoro_view(self):
         """Tworzy widok Pomodoro"""
@@ -2978,11 +3184,15 @@ class TaskManagerApp(QMainWindow):
         """Odświeża tagi w widoku zadań po zmianach w ustawieniach"""
         try:
             if hasattr(self, 'tasks_view') and self.tasks_view:
+                # Zaktualizuj mapę kolorów tagów
                 self.tasks_view.update_tags_from_settings()
-                self.tasks_view.refresh_tasks()  # Odśwież zadania z nowymi kolorami tagów
-                print("Odświeżono tagi w widoku zadań")
+                # Odśwież zadania z nowymi tagami
+                self.tasks_view.refresh_tasks()
+                print("DEBUG: Odświeżono tagi w widoku zadań")
         except Exception as e:
             print(f"Błąd odświeżania tagów w widoku zadań: {e}")
+            import traceback
+            traceback.print_exc()
     
     def setup_test_data(self):
         """Tworzy testowe dane dla demonstracji funkcjonalności"""
@@ -3139,23 +3349,30 @@ class TaskManagerApp(QMainWindow):
 
     def setup_column_width_tracking(self):
         """Konfiguruje śledzenie zmian szerokości kolumn"""
+        # Inicjalizuj timer tylko raz
+        if not hasattr(self, '_width_save_timer'):
+            from PyQt6.QtCore import QTimer
+            self._width_save_timer = QTimer()
+            self._width_save_timer.timeout.connect(self.save_current_column_widths)
+            self._width_save_timer.setSingleShot(True)
+        
         header = self.main_data_table.horizontalHeader()
         if header:
             # Połącz sygnał zmiany szerokości kolumny z zapisywaniem
+            try:
+                header.sectionResized.disconnect()  # Odłącz poprzednie połączenia
+            except:
+                pass
             header.sectionResized.connect(self.on_column_resized)
 
     def on_column_resized(self, logical_index, old_size, new_size):
         """Obsługuje zmianę szerokości kolumny"""
         print(f"DEBUG: Kolumna {logical_index} zmieniona z {old_size}px na {new_size}px")
-        # Zapisz szerokości po małym opóźnieniu (żeby nie zapisywać przy każdej małej zmianie)
+        
+        # Zrestartuj timer (zapisz po 1 sekundzie od ostatniej zmiany)
         if hasattr(self, '_width_save_timer'):
             self._width_save_timer.stop()
-        
-        from PyQt6.QtCore import QTimer
-        self._width_save_timer = QTimer()
-        self._width_save_timer.timeout.connect(self.save_current_column_widths)
-        self._width_save_timer.setSingleShot(True)
-        self._width_save_timer.start(1000)  # Zapisz po 1 sekundzie
+            self._width_save_timer.start(1000)  # Zapisz po 1 sekundzie
     
     # === OBSŁUGA SYGNAŁÓW NOTATEK ===
     def on_note_created(self, note_data):
@@ -3352,29 +3569,52 @@ class TaskManagerApp(QMainWindow):
             print(f"Błąd ładowania kolumn: {e}")
     
     def load_task_tags(self):
-        """Ładuje kategorie jako tagi zadań z kolorami"""
+        """Ładuje tagi z listy słownikowej 'Tagi zadań'"""
         try:
             from database.db_manager import Database
             db = Database()
-            categories = db.get_categories()
+            conn = db.get_connection()
+            cursor = conn.cursor()
+            
+            # Pobierz ID listy słownikowej dla kolumny TAG
+            cursor.execute("SELECT dictionary_list_id FROM task_columns WHERE name='TAG'")
+            result = cursor.fetchone()
+            
+            if not result or not result[0]:
+                print("UWAGA: Kolumna TAG nie ma przypisanej listy słownikowej!")
+                conn.close()
+                return
+            
+            tag_list_id = result[0]
+            print(f"DEBUG: Ładowanie tagów z listy słownikowej ID={tag_list_id}")
             
             # Wyczyść istniejące tagi
             self.tags_list.clear()
             
-            # Dodaj kategorie z bazy danych jako tagi
-            for category in categories:
-                # category to tuple: (id, name, color, created_at)
+            # Pobierz tagi z listy słownikowej
+            cursor.execute("""
+                SELECT id, value FROM dictionary_list_items 
+                WHERE list_id = ? 
+                ORDER BY order_index
+            """, (tag_list_id,))
+            
+            tags = cursor.fetchall()
+            conn.close()
+            
+            # Dodaj tagi do listy (z domyślnymi kolorami, bo lista słownikowa nie ma kolorów)
+            default_colors = ['#e74c3c', '#f39c12', '#3498db', '#2ecc71', '#9b59b6', '#1abc9c', '#34495e']
+            for i, (tag_id, tag_name) in enumerate(tags):
                 tag_data = {
-                    "id": str(category[0]),
-                    "name": category[1], 
-                    "color": category[2]
+                    "id": str(tag_id),
+                    "name": tag_name, 
+                    "color": default_colors[i % len(default_colors)]
                 }
                 self.add_tag_to_list(tag_data["name"], tag_data["color"], tag_data)
             
-            print(f"Załadowano {len(categories)} kategorii jako tagi")
+            print(f"Załadowano {len(tags)} tagów z listy słownikowej")
             
         except Exception as e:
-            print(f"Błąd ładowania kategorii jako tagów: {e}")
+            print(f"Błąd ładowania tagów z listy słownikowej: {e}")
             import traceback
             traceback.print_exc()
     
@@ -3538,49 +3778,63 @@ class TaskManagerApp(QMainWindow):
             traceback.print_exc()
     
     def add_task_tag(self):
-        """Dodaje nową kategorię jako tag zadania z kolorem"""
+        """Dodaje nowy tag do listy słownikowej 'Tagi zadań'"""
         try:
             from .tag_dialog import TagDialog
             dialog = TagDialog(self, theme_manager=self.theme_manager)
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 tag_data = dialog.get_tag_data()
                 
-                # Zapisz do bazy danych jako kategorię
+                # Pobierz ID listy słownikowej dla kolumny TAG
                 from database.db_manager import Database
                 db = Database()
+                conn = db.get_connection()
+                cursor = conn.cursor()
                 
-                # Sprawdź czy mamy metodę add_category w db_manager
-                try:
-                    # Dodaj jako kategorię
-                    conn = db.get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute('''
-                        INSERT INTO categories (name, color) VALUES (?, ?)
-                    ''', (tag_data["name"], tag_data["color"]))
-                    conn.commit()
-                    category_id = cursor.lastrowid
+                cursor.execute("SELECT dictionary_list_id FROM task_columns WHERE name='TAG'")
+                result = cursor.fetchone()
+                
+                if not result or not result[0]:
+                    QMessageBox.warning(self, "Błąd", "Kolumna TAG nie ma przypisanej listy słownikowej!")
                     conn.close()
-                except Exception as e:
-                    print(f"Błąd dodawania kategorii: {e}")
-                    category_id = None
+                    return
                 
-                if category_id:
+                tag_list_id = result[0]
+                
+                # Pobierz najwyższy order_index
+                cursor.execute("SELECT MAX(order_index) FROM dictionary_list_items WHERE list_id = ?", (tag_list_id,))
+                max_order = cursor.fetchone()[0]
+                next_order = (max_order or 0) + 1
+                
+                # Dodaj tag do listy słownikowej
+                cursor.execute('''
+                    INSERT INTO dictionary_list_items (list_id, value, order_index) 
+                    VALUES (?, ?, ?)
+                ''', (tag_list_id, tag_data["name"], next_order))
+                
+                conn.commit()
+                tag_id = cursor.lastrowid
+                conn.close()
+                
+                if tag_id:
                     # Dodaj tag do listy z ID
-                    tag_data["id"] = str(category_id)  # Konwertuj na string
+                    tag_data["id"] = str(tag_id)
                     self.add_tag_to_list(tag_data["name"], tag_data["color"], tag_data)
-                    print(f"Dodano kategorię jako tag: {tag_data['name']} z kolorem {tag_data['color']}")
+                    print(f"Dodano tag: {tag_data['name']} (ID={tag_id}) do listy słownikowej")
                     
                     # Odśwież tagi w widoku zadań
                     self.refresh_tasks_tags()
                 else:
-                    QMessageBox.warning(self, "Błąd", "Nie udało się dodać kategorii do bazy danych")
+                    QMessageBox.warning(self, "Błąd", "Nie udało się dodać tagu do listy słownikowej")
                 
         except Exception as e:
-            print(f"Błąd dodawania kategorii jako tag: {e}")
+            print(f"Błąd dodawania tagu: {e}")
+            import traceback
+            traceback.print_exc()
             QMessageBox.critical(self, "Błąd", f"Błąd dodawania tagu: {e}")
     
     def edit_task_tag(self):
-        """Edytuje wybraną kategorię jako tag z kolorem"""
+        """Edytuje wybrany tag w liście słownikowej"""
         try:
             current_item = self.tags_list.currentItem()
             if not current_item:
@@ -3590,7 +3844,6 @@ class TaskManagerApp(QMainWindow):
             # Pobierz dane tagu
             tag_data = current_item.data(Qt.ItemDataRole.UserRole)
             if not tag_data:
-                # Dla starych tagów bez danych kolorów
                 tag_data = {"name": current_item.text(), "color": "#3498db"}
             
             from .tag_dialog import TagDialog
@@ -3598,23 +3851,27 @@ class TaskManagerApp(QMainWindow):
             if dialog.exec() == QDialog.DialogCode.Accepted:
                 updated_data = dialog.get_tag_data()
                 
-                # Zaktualizuj w bazie danych jeśli tag ma ID (kategoria)
-                from database.db_manager import Database
-                db = Database()
-                
+                # Zaktualizuj w bazie danych jeśli tag ma ID
                 if "id" in tag_data and tag_data["id"]:
+                    from database.db_manager import Database
+                    db = Database()
+                    conn = db.get_connection()
+                    cursor = conn.cursor()
+                    
                     try:
-                        # Aktualizuj kategorię w bazie danych
-                        conn = db.get_connection()
-                        cursor = conn.cursor()
+                        # Aktualizuj wartość w liście słownikowej
                         cursor.execute('''
-                            UPDATE categories SET name = ?, color = ? WHERE id = ?
-                        ''', (updated_data["name"], updated_data["color"], int(tag_data["id"])))
+                            UPDATE dictionary_list_items 
+                            SET value = ? 
+                            WHERE id = ?
+                        ''', (updated_data["name"], int(tag_data["id"])))
                         conn.commit()
                         conn.close()
                         updated_data["id"] = tag_data["id"]  # Zachowaj ID
+                        print(f"Zaktualizowano tag ID={tag_data['id']} na '{updated_data['name']}'")
                     except Exception as e:
-                        print(f"Błąd aktualizacji kategorii: {e}")
+                        print(f"Błąd aktualizacji tagu: {e}")
+                        conn.close()
                 
                 # Zaktualizuj element na liście
                 current_item.setText(updated_data["name"])
@@ -3630,17 +3887,17 @@ class TaskManagerApp(QMainWindow):
                 # Zastosuj nowy styl
                 self.apply_tag_style(current_item, updated_data["color"], text_color)
                 
-                print(f"Zaktualizowano kategorię jako tag: {updated_data['name']} z kolorem {updated_data['color']}")
-                
                 # Odśwież tagi w widoku zadań
                 self.refresh_tasks_tags()
                 
         except Exception as e:
-            print(f"Błąd edycji kategorii jako tag: {e}")
+            print(f"Błąd edycji tagu: {e}")
+            import traceback
+            traceback.print_exc()
             QMessageBox.critical(self, "Błąd", f"Błąd edycji tagu: {e}")
     
     def delete_task_tag(self):
-        """Usuwa wybraną kategorię jako tag"""
+        """Usuwa wybrany tag z listy słownikowej"""
         try:
             current_item = self.tags_list.currentItem()
             if not current_item:
@@ -3656,30 +3913,34 @@ class TaskManagerApp(QMainWindow):
             )
             
             if reply == QMessageBox.StandardButton.Yes:
-                # Usuń z bazy danych jeśli tag ma ID (kategoria)
+                # Usuń z bazy danych jeśli tag ma ID
                 tag_data = current_item.data(Qt.ItemDataRole.UserRole)
                 if tag_data and "id" in tag_data and tag_data["id"]:
                     from database.db_manager import Database
                     db = Database()
+                    conn = db.get_connection()
+                    cursor = conn.cursor()
+                    
                     try:
-                        # Usuń kategorię z bazy danych
-                        conn = db.get_connection()
-                        cursor = conn.cursor()
-                        cursor.execute('DELETE FROM categories WHERE id = ?', (int(tag_data["id"]),))
+                        # Usuń z listy słownikowej
+                        cursor.execute('DELETE FROM dictionary_list_items WHERE id = ?', (int(tag_data["id"]),))
                         conn.commit()
                         conn.close()
+                        print(f"Usunięto tag ID={tag_data['id']} ('{tag_name}') z listy słownikowej")
                     except Exception as e:
-                        print(f"Błąd usuwania kategorii: {e}")
+                        print(f"Błąd usuwania tagu: {e}")
+                        conn.close()
                 
-                # Usuń z listy
+                # Usuń z listy UI
                 self.tags_list.takeItem(self.tags_list.row(current_item))
-                print(f"Usunięto kategorię jako tag: {tag_name}")
                 
                 # Odśwież tagi w widoku zadań
                 self.refresh_tasks_tags()
                 
         except Exception as e:
-            print(f"Błąd usuwania kategorii jako tag: {e}")
+            print(f"Błąd usuwania tagu: {e}")
+            import traceback
+            traceback.print_exc()
             QMessageBox.critical(self, "Błąd", f"Błąd usuwania tagu: {e}")
     
     def add_task_list(self):
