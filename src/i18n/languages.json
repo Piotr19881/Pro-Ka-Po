@@ -1,0 +1,24 @@
+{
+  "languages": [
+    {
+      "code": "pl",
+      "name": "Polski",
+      "native_name": "Polski",
+      "flag": "🇵🇱",
+      "default": true
+    },
+    {
+      "code": "en",
+      "name": "English",
+      "native_name": "English",
+      "flag": "🇬🇧"
+    },
+    {
+      "code": "de",
+      "name": "German",
+      "native_name": "Deutsch",
+      "flag": "🇩🇪"
+    }
+  ],
+  "fallback_language": "pl"
+}

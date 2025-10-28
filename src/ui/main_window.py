@@ -17,6 +17,8 @@ from .pomodoro_view import PomodoroView
 from .theme_manager import ThemeManager
 from .quick_task_dialog import QuickTaskDialog
 from src.utils.backup_manager import BackupManager
+from src.i18n.translation_manager import TranslationManager
+from typing import Optional
 
 class EditableTableWidget(QTableWidget):
     """Rozszerzona QTableWidget z obsługą Enter dla dodawania rekordów"""
@@ -217,6 +219,7 @@ class TaskManagerApp(QMainWindow):
         self.db = Database()
         self.db_manager = self.db  # Alias dla kompatybilności
         self.theme_manager = ThemeManager()  # Dodaj ThemeManager
+        self.translation_manager: Optional[TranslationManager] = None  # Będzie ustawiony w main()
         self.current_columns_config = []  # Przechowuje konfigurację kolumn aktualnej tabeli
         
         # Debouncing timer dla optymalizacji
@@ -678,6 +681,9 @@ class TaskManagerApp(QMainWindow):
         self.setGeometry(100, 100, 1200, 800)
         self.setMinimumSize(800, 600)
         
+        # Utwórz menu bar
+        self.create_menu_bar()
+        
         # Główny widget
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -702,6 +708,127 @@ class TaskManagerApp(QMainWindow):
         # Zastosuj początkowe style do wszystkich komponentów
         if hasattr(self, 'settings_tabs'):  # Jeśli ustawienia już istnieją
             self.apply_theme_to_settings()
+    
+    def create_menu_bar(self):
+        """Tworzy pasek menu z opcjami aplikacji"""
+        menubar = self.menuBar()
+        
+        # Menu Plik
+        file_menu = menubar.addMenu("&Plik")
+        
+        # Backup manager już istnieje w Ustawieniach, można dodać quick access tutaj
+        # exit_action = file_menu.addAction("&Wyjdź")
+        # exit_action.triggered.connect(self.quit_application)
+        
+        # Menu Widok
+        view_menu = menubar.addMenu("&Widok")
+        
+        # Submenu: Język / Language
+        language_menu = view_menu.addMenu("🌍 &Język / Language")
+        
+        # Tworzenie akcji dla każdego dostępnego języka
+        # Inicjalnie tworzymy grupę dla języka polskiego
+        self.language_action_group = []
+        
+        # Polski (domyślny) - zawsze dostępny
+        pl_action = language_menu.addAction("🇵🇱 Polski")
+        pl_action.setCheckable(True)
+        pl_action.setChecked(True)  # Domyślnie zaznaczony
+        pl_action.triggered.connect(lambda: self.change_language('pl'))
+        self.language_action_group.append(pl_action)
+        
+        # Inne języki - będą dodane dynamicznie jeśli translation_manager jest dostępny
+        # Po zainicjalizowaniu translation_manager, wywołaj update_language_menu()
+    
+    def update_language_menu(self):
+        """Aktualizuje menu języków na podstawie dostępnych tłumaczeń"""
+        if not self.translation_manager:
+            return
+        
+        # Znajdź menu języków
+        menubar = self.menuBar()
+        view_menu = None
+        for action in menubar.actions():
+            if action.text() == "&Widok":
+                view_menu = action.menu()
+                break
+        
+        if not view_menu:
+            return
+        
+        language_menu = None
+        for action in view_menu.actions():
+            if "Język" in action.text() or "Language" in action.text():
+                language_menu = action.menu()
+                break
+        
+        if not language_menu:
+            return
+        
+        # Wyczyść istniejące akcje (oprócz polskiego)
+        actions_to_remove = []
+        for action in language_menu.actions():
+            if "Polski" not in action.text():
+                actions_to_remove.append(action)
+        
+        for action in actions_to_remove:
+            language_menu.removeAction(action)
+            if action in self.language_action_group:
+                self.language_action_group.remove(action)
+        
+        # Pobierz dostępne języki z translation_manager
+        available_languages = self.translation_manager.get_available_languages()
+        current_language = self.translation_manager.get_current_language()
+        
+        # Dodaj akcje dla wszystkich języków
+        for lang in available_languages:
+            if lang['code'] == 'pl':
+                continue  # Polski już dodany
+            
+            flag = lang.get('flag', '')
+            native_name = lang.get('native_name', lang.get('name', lang['code']))
+            
+            action = language_menu.addAction(f"{flag} {native_name}")
+            action.setCheckable(True)
+            action.setChecked(lang['code'] == current_language)
+            action.triggered.connect(lambda checked, code=lang['code']: self.change_language(code))
+            self.language_action_group.append(action)
+        
+        # Zaznacz aktualny język
+        for action in self.language_action_group:
+            # Wyodrębnij kod języka z nazwy akcji
+            for lang in available_languages:
+                flag = lang.get('flag', '')
+                native_name = lang.get('native_name', lang.get('name', lang['code']))
+                if f"{flag} {native_name}" in action.text():
+                    action.setChecked(lang['code'] == current_language)
+                    break
+    
+    def change_language(self, language_code: str):
+        """Zmienia język aplikacji"""
+        if not self.translation_manager:
+            print("TranslationManager nie jest dostępny")
+            return
+        
+        # Zmień język
+        if self.translation_manager.change_language(language_code):
+            print(f"Zmieniono język na: {language_code}")
+            
+            # Aktualizuj zaznaczenie w menu
+            self.update_language_menu()
+            
+            # TODO: W przyszłości tutaj będzie wywołanie retranslateUi() dla wszystkich widoków
+            # self.retranslate_ui()
+            
+            # Pokaż komunikat o potrzebie restartu (tymczasowe rozwiązanie)
+            QMessageBox.information(
+                self,
+                "Zmiana języka / Language Change",
+                "Aby zastosować nowy język, uruchom ponownie aplikację.\n\n"
+                "Please restart the application to apply the new language."
+            )
+        else:
+            print(f"Nie udało się zmienić języka na: {language_code}")
     
     def create_navigation_section(self, parent_layout):
         """Tworzy sekcję nawigacji z przyciskami ułożonymi poziomo"""
@@ -5041,7 +5168,15 @@ def main():
     # Ustaw styl aplikacji
     app.setStyle('Fusion')
     
+    # Inicjalizuj menedżer tłumaczeń
+    translation_manager = TranslationManager(app)
+    
     window = TaskManagerApp()
+    window.translation_manager = translation_manager
+    
+    # Aktualizuj menu języków po inicjalizacji
+    window.update_language_menu()
+    
     window.show()
     
     sys.exit(app.exec())
