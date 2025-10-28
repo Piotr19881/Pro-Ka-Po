@@ -39,7 +39,7 @@ class QuickTaskDialog(QDialog):
         
     def init_ui(self):
         """Inicjalizuje interfejs użytkownika"""
-        self.setWindowTitle("Szybkie dodawanie zadania")
+        self.setWindowTitle(self.tr("Szybkie dodawanie zadania"))
         self.setMinimumWidth(800)
         self.setMaximumHeight(150)
         
@@ -59,12 +59,12 @@ class QuickTaskDialog(QDialog):
         task_layout = QHBoxLayout()
         task_layout.setSpacing(5)
         
-        task_label = QLabel("Zadanie:")
+        task_label = QLabel(self.tr("Zadanie:"))
         task_label.setMinimumWidth(80)
         task_layout.addWidget(task_label)
         
         self.task_input = QLineEdit()
-        self.task_input.setPlaceholderText("Wpisz treść zadania...")
+        self.task_input.setPlaceholderText(self.tr("Wpisz treść zadania..."))
         self.task_input.returnPressed.connect(self.add_task)
         task_layout.addWidget(self.task_input, 1)
         
@@ -81,12 +81,12 @@ class QuickTaskDialog(QDialog):
         buttons_layout = QHBoxLayout()
         buttons_layout.addStretch()
         
-        self.add_button = QPushButton("Dodaj zadanie")
+        self.add_button = QPushButton(self.tr("Dodaj zadanie"))
         self.add_button.clicked.connect(self.add_task)
         self.add_button.setMinimumWidth(120)
         buttons_layout.addWidget(self.add_button)
         
-        cancel_button = QPushButton("Anuluj")
+        cancel_button = QPushButton(self.tr("Anuluj"))
         cancel_button.clicked.connect(self.reject)
         cancel_button.setMinimumWidth(120)
         buttons_layout.addWidget(cancel_button)
@@ -173,7 +173,8 @@ class QuickTaskDialog(QDialog):
                 self.panel_widgets[col_name] = widget
             else:  # Tekstowa lub inne
                 widget = QLineEdit()
-                widget.setPlaceholderText(f"Wpisz {col_name.lower()}...")
+                # Note: col_name pochodzi z bazy danych, nie tłumaczymy dynamicznych nazw kolumn
+                widget.setPlaceholderText(self.tr("Wpisz") + f" {col_name.lower()}...")
                 col_layout.addWidget(widget, 1)
                 self.panel_widgets[col_name] = widget
             
@@ -206,12 +207,12 @@ class QuickTaskDialog(QDialog):
                 if options:
                     combo.addItems(options)
                 else:
-                    combo.addItem("Brak opcji")
+                    combo.addItem(self.tr("Brak opcji"))
             except Exception as e:
                 print(f"ERROR: Błąd ładowania opcji listy: {e}")
-                combo.addItem("Błąd ładowania")
+                combo.addItem(self.tr("Błąd ładowania"))
         else:
-            combo.addItem("Brak konfiguracji")
+            combo.addItem(self.tr("Brak konfiguracji"))
         
         return combo
     
@@ -222,7 +223,7 @@ class QuickTaskDialog(QDialog):
         
         if not task_title:
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Błąd", "Wpisz treść zadania!")
+            QMessageBox.warning(self, self.tr("Błąd"), self.tr("Wpisz treść zadania!"))
             self.task_input.setFocus()
             return
         
@@ -270,13 +271,13 @@ class QuickTaskDialog(QDialog):
                     
                     # Pokaż komunikat sukcesu
                     from PyQt6.QtWidgets import QMessageBox
-                    QMessageBox.information(self, "Sukces", "Zadanie zostało dodane!")
+                    QMessageBox.information(self, self.tr("Sukces"), self.tr("Zadanie zostało dodane!"))
                     
                     # Zamknij dialog
                     self.accept()
                 else:
                     from PyQt6.QtWidgets import QMessageBox
-                    QMessageBox.critical(self, "Błąd", "Nie udało się dodać zadania do bazy danych!")
+                    QMessageBox.critical(self, self.tr("Błąd"), self.tr("Nie udało się dodać zadania do bazy danych!"))
             
         except Exception as e:
             print(f"ERROR: Błąd dodawania zadania: {e}")
@@ -284,7 +285,7 @@ class QuickTaskDialog(QDialog):
             traceback.print_exc()
             
             from PyQt6.QtWidgets import QMessageBox
-            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas dodawania zadania:\n{e}")
+            QMessageBox.critical(self, self.tr("Błąd"), self.tr("Wystąpił błąd podczas dodawania zadania:") + f"\n{e}")
     
     def update_task_columns(self, task_id, task_data):
         """Aktualizuje wartości w niestandardowych kolumnach zadania"""
@@ -402,7 +403,7 @@ class QuickTaskDialog(QDialog):
                     item = buttons_layout.itemAt(i)
                     if item and item.widget() and isinstance(item.widget(), QPushButton):
                         widget = item.widget()
-                        if widget.text() == "Anuluj":
+                        if widget.text() == self.tr("Anuluj"):
                             widget.setStyleSheet(self.theme_manager.get_button_style())
             
         except Exception as e:
